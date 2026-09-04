@@ -1,6 +1,6 @@
 # nango-events
 
-Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/adapter-pg`) + Postgres 16. No auth.
+Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/adapter-pg`) + Postgres 16 + Redis 7 (rate-limit counters). No auth.
 
 ## Commands
 
@@ -9,7 +9,7 @@ Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run build` — `prisma generate && tsc` → `dist/`
 - `npx prisma migrate dev --name <name>` — new migration; `npx prisma migrate deploy` — apply
-- `docker compose up --build` — Postgres on :5432 + API on :3000, migrations applied on start
+- `docker compose up --build` — Postgres :5432, Redis :6379, Grafana :3001 (admin/admin, Postgres datasource pre-provisioned from `grafana/provisioning`), API :3000; migrations applied on start
 
 `npm install` runs `prisma generate` (postinstall). Generated client lives in `src/generated/prisma` (gitignored) — never edit it, never import from `@prisma/client` directly; import `../generated/prisma/client`.
 
@@ -18,7 +18,7 @@ Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 ```
 src/config/      plain object read from env (no schema library). ONLY place that reads process.env. Import `config` from here.
 src/routes.ts    URL → [validation middleware →] controller wiring only
-src/middleware/  request-id (AsyncLocalStorage, `currentRequestId()`), request-logger, validation (zod schemas for every input; typed result on `res.locals`)
+src/middleware/  request-id (AsyncLocalStorage, `currentRequestId()`), request-logger, rate-limit (express-rate-limit + Redis store), validation (zod schemas for every input; typed result on `res.locals`)
 src/controllers/ HTTP concerns only: read `res.locals`, call the service, set status + response shape. No try/catch, no validation.
 src/services/    business logic on already-validated input, including building the Prisma `where` (`EventWhere`).
 src/models/      Prisma data access for `events`: plain exported functions that receive a ready `where`. Raw SQL only for `countEventsByWindow`. `event-name.ts` holds the `EventName` enum.
@@ -31,7 +31,7 @@ test/            vitest + supertest against the real `app`. Each test file `vi.m
 
 No dependency injection: modules import each other directly (`routes` → `middleware/validation` → `controllers` → `services` → `models`). Tests swap the model with `vi.mock('../src/models/event.model')`.
 
-Request flow: `requestId` → `requestLogger` → `express.json` → route (`validateX` middleware throws `ValidationError` → 400, then controller) → `errorHandler`. Express 5 forwards thrown errors and rejected promises to `errorHandler`, so nothing else catches errors.
+Request flow: `requestId` → `requestLogger` → `express.json` → route (`ingestRateLimit` on POST /ingest, then `validateX` middleware throws `ValidationError` → 400, then controller) → `errorHandler`. Express 5 forwards thrown errors and rejected promises to `errorHandler`, so nothing else catches errors.
 
 ## Data model
 
@@ -42,7 +42,7 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 ## API
 
-- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`. Unknown `event_name` → 400 listing the allowed values.
+- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`. Rate limited per `account_id:event_name` to `INGEST_RATE_LIMIT_PER_MINUTE` (100) → `429 { error: "Too many requests" }` with `RateLimit-*` headers. Counters in Redis when `REDIS_URL` is set, otherwise in-process memory. Unknown `event_name` → 400 listing the allowed values.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
   - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`.
@@ -63,4 +63,5 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 ## Status
 
-Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package, 60 tests (44 on GET /events). Verified end-to-end against a real Postgres 16.
+Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package. Verified end-to-end against a real Postgres 16.
+Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose. 62 tests.

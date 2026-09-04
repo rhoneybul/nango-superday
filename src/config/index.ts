@@ -30,9 +30,13 @@ export const config = {
   port: integer('PORT', 3000),
   databaseUrl: env.DATABASE_URL,
   logLevel: logLevel('info'),
+  /** Optional. When unset, rate-limit counters are kept in memory instead. */
+  redisUrl: env.REDIS_URL || undefined,
 
   /** Page size for GET /events when `limit` is not supplied. */
   eventsDefaultLimit: integer('EVENTS_DEFAULT_LIMIT', 100),
   /** Largest `limit` a caller may ask for on GET /events. */
   eventsMaxLimit: integer('EVENTS_MAX_LIMIT', 1000),
+  /** POST /ingest requests allowed per minute for each `account_id:event_name`. */
+  ingestRateLimitPerMinute: integer('INGEST_RATE_LIMIT_PER_MINUTE', 100),
 };

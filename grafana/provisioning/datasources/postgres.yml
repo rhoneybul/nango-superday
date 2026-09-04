@@ -1,0 +1,13 @@
+# Pre-wires Grafana to the events database so it is queryable on first login.
+apiVersion: 1
+datasources:
+  - name: Events Postgres
+    type: postgres
+    url: db:5432
+    user: nango
+    secureJsonData:
+      password: nango
+    jsonData:
+      database: nango
+      sslmode: disable
+    isDefault: true
