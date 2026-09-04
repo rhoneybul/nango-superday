@@ -22,7 +22,9 @@
  * Env:   CONFIG  path to the JSON file (default ./example.json, relative to this script)
  *        TARGET  overrides `target` from the file (used by docker compose: http://api:3000)
  *
- * Everything below `options` is plain k6; the end-of-test summary is k6's own.
+ * Everything below `options` is plain k6. `handleSummary` at the bottom replaces
+ * k6's default report with a short one: successful / rate limited / failed
+ * counts, one latency line, and the threshold results.
  */
 import http from 'k6/http';
 import exec from 'k6/execution';
@@ -129,20 +131,12 @@ config.events.forEach((entry, i) => {
 });
 
 // ---------------------------------------------------------------------------
-// Thresholds: real pass/fail gates from the config, plus always-true ones that
-// make k6 print per-status-code and per-stream breakdowns in the summary.
+// Thresholds: pass/fail gates from the config
 // ---------------------------------------------------------------------------
 
 const thresholds = {};
 if (config.thresholds.p95Ms !== undefined) thresholds.http_req_duration = [`p(95)<${config.thresholds.p95Ms}`];
 if (config.thresholds.maxErrorRate !== undefined) thresholds.http_req_failed = [`rate<=${config.thresholds.maxErrorRate}`];
-
-// Status codes the API is known to return; anything else lands in the responses_* counters below.
-for (const status of [201, 400, 429, 500]) thresholds[`http_reqs{status:${status}}`] = ['count>=0'];
-for (const name of Object.keys(scenarios)) {
-  thresholds[`http_reqs{scenario:${name}}`] = ['count>=0'];
-  thresholds[`http_req_duration{scenario:${name}}`] = ['p(95)>=0'];
-}
 
 // Which statuses count as success for http_req_failed / the maxErrorRate threshold.
 http.setResponseCallback(http.expectedStatuses(...config.expectedStatuses));
@@ -158,21 +152,20 @@ export const options = {
 };
 
 // ---------------------------------------------------------------------------
-// Metrics: response class counters (status 0 = connection error / timeout)
+// Metrics: every response is exactly one of successful / rate limited / failed
+// (failed = any other status, including 0 for a connection error or timeout)
 // ---------------------------------------------------------------------------
 
-const responses = {
-  '2xx': new Counter('responses_2xx'),
-  '4xx': new Counter('responses_4xx'),
-  '5xx': new Counter('responses_5xx'),
-  other: new Counter('responses_other'),
+const outcomes = {
+  successful: new Counter('successful'),
+  rate_limited: new Counter('rate_limited'),
+  failed: new Counter('failed'),
 };
 
-function classify(status) {
-  if (status >= 200 && status < 300) return '2xx';
-  if (status >= 400 && status < 500) return '4xx';
-  if (status >= 500 && status < 600) return '5xx';
-  return 'other';
+function outcome(status) {
+  if (status === 201) return 'successful';
+  if (status === 429) return 'rate_limited';
+  return 'failed';
 }
 
 // ---------------------------------------------------------------------------
@@ -200,6 +193,41 @@ export function publish() {
     headers: { 'Content-Type': 'application/json' },
     tags: { name: 'ingest' },
   });
-  responses[classify(res.status)].add(1);
+  outcomes[outcome(res.status)].add(1);
   check(res, { [EXPECTED_CHECK]: (r) => config.expectedStatuses.includes(r.status) });
+}
+
+// ---------------------------------------------------------------------------
+// Summary: printed to stdout at the end of the run (--summary-export still
+// writes the full k6 data to results/summary.json)
+// ---------------------------------------------------------------------------
+
+export function handleSummary(data) {
+  const m = (name) => (data.metrics[name] && data.metrics[name].values) || {};
+  const total = m('http_reqs').count || 0;
+  const pct = (n) => (total ? ((100 * n) / total).toFixed(1) : '0.0') + '%';
+  const line = (label, name) => {
+    const v = m(name);
+    const n = v.count || 0;
+    return `  ${label.padEnd(20)} ${String(n).padStart(7)}   ${pct(n).padStart(6)}   ${(v.rate || 0).toFixed(2)}/s`;
+  };
+  const d = m('http_req_duration');
+  const ms = (k) => (d[k] === undefined ? '-' : d[k].toFixed(2) + 'ms');
+  const thresholds = Object.entries(data.metrics)
+    .flatMap(([name, metric]) => Object.entries(metric.thresholds || {}).map(([expr, t]) => `  ${t.ok ? '\u2713' : '\u2717'} ${name} ${expr}`));
+
+  const out = [
+    '',
+    `Load summary: ${total} requests to ${TARGET}/ingest over ${config.duration} (${(m('http_reqs').rate || 0).toFixed(2)}/s)`,
+    '',
+    line('successful (201)', 'successful'),
+    line('rate limited (429)', 'rate_limited'),
+    line('failed (other)', 'failed'),
+    '',
+    `  latency  p50=${ms('p(50)')}  p95=${ms('p(95)')}  p99=${ms('p(99)')}  avg=${ms('avg')}  max=${ms('max')}`,
+    `  dropped iterations (rps not reached): ${m('dropped_iterations').count || 0}`,
+    '',
+    ...(thresholds.length ? ['Thresholds:', ...thresholds, ''] : []),
+  ];
+  return { stdout: out.join('\n') + '\n' };
 }

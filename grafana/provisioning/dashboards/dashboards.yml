@@ -1,9 +1,14 @@
 # Loads every *.json in this directory as a dashboard (editable in the UI; edits are not written back).
+# They go in the same `nango-events` folder as the provisioned alert rule (alerting/rules.yml), and
+# disableDeletion stops them being deleted from the UI. Grafana will not delete a folder that still
+# holds undeletable dashboards, so the folder, and the alert rule inside it, can no longer be removed
+# by hand.
 apiVersion: 1
 providers:
   - name: nango-events
-    folder: ''
+    folder: nango-events
     type: file
     allowUiUpdates: true
+    disableDeletion: true
     options:
       path: /etc/grafana/provisioning/dashboards

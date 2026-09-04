@@ -61,21 +61,34 @@ Bad configs fail fast with a list of problems before any request is sent.
 
 ## Reading the summary
 
-k6 prints its standard end-of-test report. The lines that matter:
+The script prints its own short report instead of k6's default one:
 
-| Line                                   | What it tells you                                                              |
-|----------------------------------------|--------------------------------------------------------------------------------|
-| `http_reqs ... 1234  20.5/s`           | Total requests and achieved throughput.                                        |
-| `http_req_duration  p(50)= p(95)= ...` | Latency percentiles over every request.                                        |
-| `{ status:201 }`, `{ status:429 }` ...  | Count per status code (201, 400, 429, 500 are listed even when zero).          |
-| `{ scenario:acc_1__signup__0 }`         | Per-stream request count and latency percentiles. Name = `account__event__index`. |
-| `responses_2xx/4xx/5xx/other`          | Counts by class; `other` is a connection error or timeout (status 0).          |
-| `http_req_failed`                      | Fraction of responses outside `expectedStatuses`.                              |
-| `checks` / `status in [201, 429]`      | Share of responses inside `expectedStatuses`; `{ status:201 }` is the number actually stored. |
-| `dropped_iterations`                   | Requests k6 could not start on time. Non-zero means the target rps was not reached: raise `maxVUs` or lower `rps`. |
+```
+Load summary: 1054 requests to http://api:3000/ingest over 60s (17.53/s)
 
-The same numbers are written as JSON to `load/results/summary.json` (git-ignored). Thresholds are listed
-with a ✓ or ✗; any ✗ makes k6 exit with a non-zero code, which is what you want in CI.
+  successful (201)         352    33.4%   5.86/s
+  rate limited (429)       700    66.4%  11.65/s
+  failed (other)             2     0.2%   0.03/s
+
+  latency  p50=5.28ms  p95=11.76ms  p99=308.38ms  avg=14.19ms  max=433.53ms
+  dropped iterations (rps not reached): 0
+
+Thresholds:
+  ✓ http_req_duration p(95)<250
+  ✓ http_req_failed rate<=0.01
+```
+
+| Line                  | What it tells you                                                                                                   |
+|-----------------------|---------------------------------------------------------------------------------------------------------------------|
+| `successful (201)`    | Events actually stored.                                                                                             |
+| `rate limited (429)`  | Rejected by the per `account_id` + `event_name` limit.                                                              |
+| `failed (other)`      | Everything else: `400` (bad input), `5xx`, or a connection error / timeout.                                         |
+| `latency`             | p50 / p95 / p99 / average / max over every request, in ms.                                                          |
+| `dropped iterations`  | Requests k6 could not start on time. Non-zero means the target rps was not reached: raise `maxVUs` or lower `rps`.  |
+| `Thresholds`          | One line per gate from the config. Any ✗ makes k6 exit non-zero, which is what you want in CI.                     |
+
+The full k6 data (every built-in metric, per-scenario tags) is still written to `load/results/summary.json`
+(git-ignored) if you need more detail.
 
 ## Rate limiting in the example
 
@@ -91,7 +104,7 @@ stream gets `429` for the rest of each minute once it has used its 100. In `exam
 | `acc_3` / `login`     | 10  | 600             | ~100   | ~500         |
 
 `expectedStatuses` includes `429` there so the error-rate threshold only trips on real failures. The
-per-scenario and `{ status:429 }` lines in the summary show the split.
+`successful` / `rate limited` lines in the summary show the split.
 
 ## Advanced
 
