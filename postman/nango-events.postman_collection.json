@@ -1,0 +1,941 @@
+{
+  "info": {
+    "name": "nango-events",
+    "description": "Requests that exercise every path of the events API: valid ingests, each kind of invalid input, the per account_id:event_name rate limit, and the query endpoint. Each request asserts its expected status code, so the whole collection can be run with the Collection Runner or newman.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000"
+    },
+    {
+      "key": "accountId",
+      "value": "postman_acc"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"status ok\", () => pm.expect(pm.response.json().status).to.eql(\"ok\"));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": ""
+      }
+    },
+    {
+      "name": "Ingest - valid",
+      "description": "",
+      "item": [
+        {
+          "name": "Valid event (signup, timestamp defaults to now)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"returns the stored event\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"signup\"); pm.expect(d.id).to.be.a(\"string\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Valid event (purchase, explicit timestamp)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"uses the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"purchase\",\n  \"timestamp\": \"2026-09-01T10:15:00Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Valid event (login, epoch milliseconds timestamp)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"uses the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"login\",\n  \"timestamp\": 1788257700000\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ingest - invalid",
+      "description": "",
+      "item": [
+        {
+          "name": "Unknown event name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"event_name\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"page_view\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Missing event name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"event_name\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Missing account id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"account_id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_name\": \"signup\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Blank account id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"account_id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"   \",\n  \"event_name\": \"signup\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Non-string account id",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"account_id\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": 12345,\n  \"event_name\": \"signup\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Timestamp in the future",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().error).to.include(\"timestamp: must not be in the future\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\",\n  \"timestamp\": \"2999-01-01T00:00:00Z\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Unparseable timestamp",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().error).to.include(\"timestamp: must be an ISO-8601 date\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\",\n  \"timestamp\": \"yesterday\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Several invalid fields at once",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"lists every problem in details\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"account_id\", \"event_name\", \"timestamp\"]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"timestamp\": \"nope\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Array body",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "[\n  {\n    \"account_id\": \"{{accountId}}\",\n    \"event_name\": \"signup\"\n  }\n]"
+            }
+          }
+        },
+        {
+          "name": "Malformed JSON",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"malformed json message\", () => pm.expect(pm.response.json().error).to.eql(\"Malformed JSON body\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "",
+            "body": {
+              "mode": "raw",
+              "raw": "{\"account_id\": \"{{accountId}}\", \"event_name\": "
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Ingest - rate limit",
+      "description": "The limit is INGEST_RATE_LIMIT_PER_MINUTE (default 100) per account_id:event_name.",
+      "item": [
+        {
+          "name": "Rate limit (run 101 times)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"rate limit headers present\", () => pm.expect(pm.response.headers.has(\"RateLimit-Limit\")).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "Run this with the Collection Runner set to 101 iterations: the first 100 return 201, the 101st returns 429 with RateLimit-* headers. Uses its own account so it never blocks the other requests.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"ratelimit_acc\",\n  \"event_name\": \"logout\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Other event for the same account still accepted",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "Send after the request above has hit 429: the limit is per account_id + event_name, so a different event name is still served.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"ratelimit_acc\",\n  \"event_name\": \"signup\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Query events",
+      "description": "",
+      "item": [
+        {
+          "name": "Events for account (newest first)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"has data and meta\", () => { const b = pm.response.json(); pm.expect(b.data).to.be.an(\"array\"); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account={{accountId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "{{accountId}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Events for account + event name in a date range",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"echoes filters\", () => pm.expect(pm.response.json().filters).to.eql({ account: pm.variables.get(\"accountId\"), event: \"purchase\", from: \"2026-09-01T00:00:00.000Z\", to: \"2026-09-02T00:00:00.000Z\" }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account={{accountId}}&event=purchase&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "{{accountId}}"
+                },
+                {
+                  "key": "event",
+                  "value": "purchase"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-09-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-02T00:00:00Z"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Counts per hour (window=1h)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"windowed shape\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.buckets).to.be.an(\"array\"); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account={{accountId}}&window=1h",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "{{accountId}}"
+                },
+                {
+                  "key": "window",
+                  "value": "1h"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Paginated (limit=2, offset=1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"meta reflects paging\", () => pm.expect(pm.response.json().meta).to.include({ limit: 2, offset: 1 }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?limit=2&offset=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "2"
+                },
+                {
+                  "key": "offset",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Invalid: unknown event filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?event=page_view",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "event",
+                  "value": "page_view"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Invalid: from after to",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().error).to.include(\"from: must be before or equal to to\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?from=2026-09-02T00:00:00Z&to=2026-09-01T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "from",
+                  "value": "2026-09-02T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-01T00:00:00Z"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Invalid: limit over maximum",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?limit=100000",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100000"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Invalid: bad window",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?window=1y",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "window",
+                  "value": "1y"
+                }
+              ]
+            },
+            "description": ""
+          }
+        }
+      ]
+    }
+  ]
+}

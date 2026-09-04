@@ -8,7 +8,7 @@ Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
 docker compose up --build
 ```
 
-Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied automatically on startup.
+Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`.
 For Slack alerts, put a Slack incoming-webhook URL for `#superday-rob` in `.env` as `SLACK_WEBHOOK_URL` before starting (see [Alerting](#alerting)).
 
 ## Run locally
@@ -29,7 +29,7 @@ npm run dev
 { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
-`event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database. Returns `201` with the stored event.
+`event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database; it may not be in the future. Returns `201` with the stored event.
 
 Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
 
@@ -81,6 +81,19 @@ Once the pair has gone a minute without a rejection the same contact points get:
 
 Adding an alert: record a metric in `src/lib/metrics.ts` at the point where the thing happens, then add a rule to `rules.yml` with a Prometheus query, a threshold, and `summary`/`resolved` annotations (one plain, actionable line each).
 
+## Load testing
+
+```bash
+npm run load                          # load/example.json
+LOAD_CONFIG=my-run.json npm run load  # any file inside load/
+```
+
+Runs [k6](https://grafana.com/docs/k6/latest/) via Docker Compose against the API, one fixed-rate stream per
+`{ account_id, event_name, rps }` entry in the JSON config, for a configurable duration, and prints throughput,
+status-code counts and p50/p95/p99 latency. See [load/README.md](load/README.md) for the config format and how
+to read the report. The default example mixes streams that stay under the ingest rate limit with ones that
+trip it.
+
 ## Layout
 
 ```
@@ -96,10 +109,15 @@ src/
 prisma/          schema + migrations
 prometheus/      scrape config (the API's /metrics)
 grafana/         Grafana provisioning: datasources (Postgres, Prometheus); alert rules, contact points, notification policies
+load/            k6 load generator: publish.js + JSON run configs (see load/README.md)
 test/            vitest + supertest against the real app, model module mocked with vi.mock
 ```
 
 Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.
+
+## Postman
+
+Import `postman/nango-events.postman_collection.json`. It covers valid ingests, each kind of invalid input, the rate limit (run the "Rate limit" request 101 times with the Collection Runner), and the query endpoint. Set the `baseUrl` variable if the API is not on `http://localhost:3000`.
 
 ## Tests
 

@@ -26,6 +26,7 @@ describe('POST /ingest', () => {
     [{ account_id: 123, event_name: 'signup' }, /account_id: .*expected string/],
     [{ account_id: 'acc_1', event_name: 'signup', timestamp: 'not-a-date' }, /timestamp: must be an ISO-8601 date/],
     [{ account_id: 'acc_1', event_name: 'page_view' }, /event_name: Invalid option: expected one of "signup"\|"login"\|"logout"\|"purchase"/],
+    [{ account_id: 'acc_1', event_name: 'signup', timestamp: '2999-01-01T00:00:00Z' }, /timestamp: must not be in the future/],
   ])('rejects invalid body %j', async (body, message) => {
     const res = await request(app).post('/ingest').send(body);
     expect(res.status).toBe(400);

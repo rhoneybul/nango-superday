@@ -14,7 +14,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "load": "docker compose --profile load run --rm k6",
+    "load:local": "cd load && k6 run --summary-export=results/summary.json -e CONFIG=${LOAD_CONFIG:-example.json} publish.js"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

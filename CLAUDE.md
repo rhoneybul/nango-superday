@@ -9,7 +9,8 @@ Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run build` — `prisma generate && tsc` → `dist/`
 - `npx prisma migrate dev --name <name>` — new migration; `npx prisma migrate deploy` — apply
-- `docker compose up --build` — Postgres :5432, Redis :6379, Prometheus :9090 (scrapes the API's /metrics), Grafana :3001 (admin/admin; Postgres + Prometheus datasources, alert rules, contact points and notification policies pre-provisioned from `grafana/provisioning`), API :3000; migrations applied on start. Set `SLACK_WEBHOOK_URL` in `.env` for Slack alerts.
+- `docker compose up --build` — Postgres :5432, Redis :6379, Prometheus :9090 (scrapes the API's /metrics), Grafana :3001 (admin/admin; Postgres + Prometheus datasources, alert rules, contact points and notification policies pre-provisioned from `grafana/provisioning`), API :3000; migrations applied on start. Host ports are overridable via `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`. Set `SLACK_WEBHOOK_URL` in `.env` for Slack alerts
+- `npm run load` — k6 load test through compose (`k6` service, profile `load`), config `load/<LOAD_CONFIG>` (default `example.json`), summary JSON in `load/results/`. `npm run load:local` uses a local `k6` binary against `localhost:3000`
 
 `npm install` runs `prisma generate` (postinstall). Generated client lives in `src/generated/prisma` (gitignored) — never edit it, never import from `@prisma/client` directly; import `../generated/prisma/client`.
 
@@ -28,6 +29,7 @@ src/server.ts    listen + graceful shutdown
 prisma/          schema.prisma + migrations (initial migration is hand-written; keep it in sync with schema)
 prometheus/      prometheus.yml (scrapes api:3000/metrics every 10s)
 grafana/         provisioning/datasources (Postgres; Prometheus uid `prometheus`), provisioning/alerting (rules.yml, contact-points.yml, notification-policies.yml)
+load/            k6 load generator. `publish.js` = one constant-arrival-rate scenario per `{account_id, event_name, rps}` in the JSON config; `README.md` documents the config + report. No app code here, plain k6.
 test/            vitest + supertest against the real `app`. Each test file `vi.mock`s the model module; helpers.ts resets the stubs to defaults.
 ```
 
@@ -44,7 +46,7 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 ## API
 
-- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`. Rate limited per `account_id:event_name` to `INGEST_RATE_LIMIT_PER_MINUTE` (100) → `429 { error: "Too many requests" }` with `RateLimit-*` headers ; each rejection is recorded in the rate-limit metrics (see Alerting). Counters in Redis when `REDIS_URL` is set, otherwise in-process memory. Unknown `event_name` → 400 listing the allowed values.
+- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`; a timestamp in the future → 400. Rate limited per `account_id:event_name` to `INGEST_RATE_LIMIT_PER_MINUTE` (100) → `429 { error: "Too many requests" }` with `RateLimit-*` headers; each rejection is recorded in the rate-limit metrics (see Alerting). Counters in Redis when `REDIS_URL` is set, otherwise in-process memory. Unknown `event_name` → 400 listing the allowed values.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
   - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`.
@@ -77,5 +79,7 @@ Grafana's built-in Alertmanager does not accept externally pushed alerts (`POST 
 ## Status
 
 Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package. Verified end-to-end against a real Postgres 16.
-Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose. 62 tests.
-Phase 3 complete: rate-limit metrics + GET /metrics, Prometheus in compose, Grafana-provisioned alerting (RateLimitExceeded rule on Prometheus, Slack contact point, notification policy). 63 tests. Firing → resolved verified against a real Prometheus 3 + Grafana 13 with a webhook stand-in for Slack.
+Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose.
+Phase 3 complete: k6-based event publisher (`load/`), no bespoke CLI. Docker image now copies `prisma.config.ts` (needed by `prisma migrate deploy` at container start) and `.dockerignore` also excludes `src/generated`, `load/results`, `.git`.
+Postman collection for manual testing: `postman/nango-events.postman_collection.json` (variables `baseUrl`, `accountId`).
+Phase 4 complete: rate-limit metrics + GET /metrics, Prometheus in compose, Grafana-provisioned alerting (RateLimitExceeded rule on Prometheus, Slack contact point, notification policy). 64 tests. Firing → resolved verified against a real Prometheus 3 + Grafana 13 with a webhook stand-in for Slack.

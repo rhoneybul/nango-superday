@@ -50,7 +50,7 @@ const ingestSchema: z.ZodType<IngestInput> = z
   .object({
     account_id: z.string().trim().min(1),
     event_name: z.enum(EventName),
-    timestamp: date.optional(),
+    timestamp: date.refine((d) => d <= new Date(), 'must not be in the future').optional(),
   })
   .transform((body) => ({ accountId: body.account_id, eventName: body.event_name, timestamp: body.timestamp }));
 
