@@ -86,8 +86,8 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
-                  "pm.test(\"returns the stored event\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"signup\"); pm.expect(d.id).to.be.a(\"string\"); });"
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"returns the queued event\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"signup\"); pm.expect(d.messageId).to.be.a(\"string\"); });"
                 ]
               }
             }
@@ -124,7 +124,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
                   "pm.test(\"uses the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
                 ]
               }
@@ -162,7 +162,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
                   "pm.test(\"uses the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
                 ]
               }
@@ -629,7 +629,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));",
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
                   "pm.test(\"rate limit headers present\", () => pm.expect(pm.response.headers.has(\"RateLimit-Limit\")).to.be.true);"
                 ]
               }
@@ -652,7 +652,7 @@
                 "ingest"
               ]
             },
-            "description": "Run this with the Collection Runner set to 101 iterations: the first 100 return 201, the 101st returns 429 with RateLimit-* headers. Uses the seeded account acc_umbrella (Umbrella Corp) so it never blocks the other requests.",
+            "description": "Run this with the Collection Runner set to 101 iterations: the first 100 return 202, the 101st returns 429 with RateLimit-* headers. Uses the seeded account acc_umbrella (Umbrella Corp) so it never blocks the other requests.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"logout\"\n}"
@@ -667,7 +667,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 201\", () => pm.response.to.have.status(201));"
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));"
                 ]
               }
             }

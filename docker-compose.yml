@@ -25,7 +25,28 @@ services:
       timeout: 3s
       retries: 10
 
-  # Scrapes the API's /metrics; Grafana's alert rules query it. Config: ./prometheus/prometheus.yml. UI on :9090.
+  # Queue between the API and the consumer (topology in src/queue/topology.ts). Management UI on :15672
+  # (nango/nango). Its Prometheus plugin (:15692, internal) gives Grafana the queue depths; config in ./rabbitmq.
+  rabbitmq:
+    image: rabbitmq:4.1-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: nango
+      RABBITMQ_DEFAULT_PASS: nango
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - ./rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  # Scrapes the API's /metrics and RabbitMQ's; Grafana's dashboards and alert rules query it.
+  # Config: ./prometheus/prometheus.yml. UI on :9090.
   prometheus:
     image: prom/prometheus:v3.14.0
     volumes:
@@ -59,10 +80,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 3000
       DATABASE_URL: postgresql://nango:nango@db:5432/nango?schema=public
+      RABBITMQ_URL: amqp://nango:nango@rabbitmq:5672
       EVENTS_DEFAULT_LIMIT: 100
       EVENTS_MAX_LIMIT: 1000
       INGEST_RATE_LIMIT_PER_MINUTE: 100
@@ -78,6 +102,20 @@ services:
       interval: 2s
       timeout: 2s
       retries: 30
+
+  # Reads the `events` queue and inserts into Postgres (src/consumer.ts). Same image as the API, different
+  # entry point; waits for the API so migrations have been applied. `--scale consumer=N` for more.
+  consumer:
+    build: .
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://nango:nango@db:5432/nango?schema=public
+      RABBITMQ_URL: amqp://nango:nango@rabbitmq:5672
+      LOG_LEVEL: info
+    command: node dist/consumer.js
 
   # Load generator (k6). Behind a profile, so `docker compose up` does not start it.
   # Run on demand with `npm run load` (uses load/example.json) or
@@ -97,5 +135,6 @@ services:
 
 volumes:
   pgdata:
+  rabbitmq-data:
   prometheus-data:
   grafana-data:

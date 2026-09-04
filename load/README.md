@@ -39,7 +39,7 @@ npm run load:local
     { "account_id": "acc_acme", "event_name": "signup", "rps": 1 },
     { "account_id": "acc_globex", "event_name": "purchase", "rps": 5, "maxVUs": 50 }
   ],
-  "expectedStatuses": [201, 429],
+  "expectedStatuses": [202, 429],
   "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
 }
 ```
@@ -53,7 +53,7 @@ npm run load:local
 | `events[].event_name`      | yes      | Sent as `event_name`. Unknown names are a handy way to generate `400`s.                                   |
 | `events[].rps`             | yes      | Requests per second for this stream. Fractions are fine (`0.5` = one request every 2s).                   |
 | `events[].maxVUs`          | no       | Cap on concurrent requests for the stream (default `max(20, 2 × rps)`). Raise it if k6 warns about VUs.   |
-| `expectedStatuses`         | no       | Statuses that count as success for the error rate (default `[201]`). Add `429` when limiting is expected, `404` when a stream uses an unknown account on purpose. |
+| `expectedStatuses`         | no       | Statuses that count as success for the error rate (default `[202]`). Add `429` when limiting is expected, `404` when a stream uses an unknown account on purpose. |
 | `thresholds.p95Ms`         | no       | Fail the run (non-zero exit) if p95 latency across all requests is at or above this many ms.              |
 | `thresholds.maxErrorRate`  | no       | Fail the run if the fraction of unexpected statuses/network errors exceeds this (`0.01` = 1%).            |
 
@@ -66,7 +66,7 @@ The script prints its own short report instead of k6's default one:
 ```
 Load summary: 1054 requests to http://api:3000/ingest over 60s (17.53/s)
 
-  successful (201)         352    33.4%   5.86/s
+  accepted (202)           352    33.4%   5.86/s
   rate limited (429)       700    66.4%  11.65/s
   unknown account (404)     30     2.8%   0.50/s
   failed (other)             2     0.2%   0.03/s
@@ -81,7 +81,7 @@ Thresholds:
 
 | Line                  | What it tells you                                                                                                   |
 |-----------------------|---------------------------------------------------------------------------------------------------------------------|
-| `successful (201)`    | Events actually stored.                                                                                             |
+| `accepted (202)`      | Events accepted onto the queue (inserted into Postgres by the consumer shortly after).                              |
 | `rate limited (429)`  | Rejected by the per `account_id` + `event_name` limit.                                                              |
 | `unknown account (404)` | `account_id` is not a seeded account (see `src/models/seeded-accounts.ts`).                                       |
 | `failed (other)`      | Everything else: `400` (bad input), `5xx`, or a connection error / timeout.                                         |
@@ -111,7 +111,7 @@ stream gets `429` for the rest of each minute once it has used its 100. In `exam
 | `acc_unknown` / `signup`    | 0.5 | 30              | 0      | 0            | 30 (`404`)      |
 
 `expectedStatuses` includes `429` and `404` there so the error-rate threshold only trips on real failures.
-The `successful` / `rate limited` / `unknown account` lines in the summary show the split.
+The `accepted` / `rate limited` / `unknown account` lines in the summary show the split.
 
 ## Advanced
 

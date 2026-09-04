@@ -5,6 +5,7 @@ import './helpers';
 
 vi.mock('../src/models/event.model');
 vi.mock('../src/models/account.model');
+vi.mock('../src/queue/publisher');
 
 // No REDIS_URL in the test env, so the limiter uses its in-memory store.
 // This file gets a fresh module registry, and therefore a fresh store.
@@ -13,7 +14,7 @@ describe('POST /ingest rate limit', () => {
   it('allows 100 per minute per account_id:event_name, then returns 429', async () => {
     for (let i = 0; i < 100; i++) {
       const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'signup' });
-      expect(res.status).toBe(201);
+      expect(res.status).toBe(202);
     }
 
     const blocked = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'signup' });
@@ -24,7 +25,7 @@ describe('POST /ingest rate limit', () => {
 
   it('does not block other events for the same account', async () => {
     const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'purchase' });
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(202);
   });
 
   it('records the rejection in the rate-limit metrics on GET /metrics', async () => {
@@ -38,8 +39,8 @@ describe('POST /ingest rate limit', () => {
 
   it('records HTTP request metrics per method, route and status', async () => {
     const res = await request(app).get('/metrics');
-    expect(res.text).toMatch(/^http_requests_total\{method="POST",route="\/ingest",status="201"\} 101$/m);
+    expect(res.text).toMatch(/^http_requests_total\{method="POST",route="\/ingest",status="202"\} 101$/m);
     expect(res.text).toMatch(/^http_requests_total\{method="POST",route="\/ingest",status="429"\} 1$/m);
-    expect(res.text).toMatch(/^http_request_duration_seconds_count\{method="POST",route="\/ingest",status="201"\} 101$/m);
+    expect(res.text).toMatch(/^http_request_duration_seconds_count\{method="POST",route="\/ingest",status="202"\} 101$/m);
   });
 });
