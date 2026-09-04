@@ -1,7 +1,12 @@
 # Pre-wires Grafana to the events database so it is queryable on first login.
 apiVersion: 1
+# Recreate on every start so the uid below applies even to a Grafana volume created before it existed.
+deleteDatasources:
+  - name: Events Postgres
+    orgId: 1
 datasources:
   - name: Events Postgres
+    uid: postgres   # referenced by provisioning/dashboards/events.json
     type: postgres
     url: db:5432
     user: nango

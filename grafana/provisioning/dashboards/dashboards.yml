@@ -1,0 +1,9 @@
+# Loads every *.json in this directory as a dashboard (editable in the UI; edits are not written back).
+apiVersion: 1
+providers:
+  - name: nango-events
+    folder: ''
+    type: file
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/provisioning/dashboards

@@ -59,6 +59,8 @@ With `window` the response is a count per time bucket (epoch-aligned via Postgre
 
 ### `GET /metrics`
 
+Includes `http_requests_total` and `http_request_duration_seconds` (labels `method`, `route`, `status`) for every request, plus the rate-limit metrics below.
+
 Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest rejection), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
 
 Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
@@ -114,6 +116,10 @@ test/            vitest + supertest against the real app, model module mocked wi
 ```
 
 Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.
+
+## Dashboards
+
+Grafana (`:3001`) comes with two provisioned dashboards: **API HTTP** (requests/s, latency, error rate, rate-limit hits, from Prometheus) and **Events** (events over time, by name, top accounts, latest events, straight from Postgres). Source: `grafana/provisioning/dashboards/*.json`.
 
 ## Postman
 

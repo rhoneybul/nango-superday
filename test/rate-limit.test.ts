@@ -34,4 +34,11 @@ describe('POST /ingest rate limit', () => {
     expect(res.text).toMatch(/^ingest_rate_limited_last_seen_timestamp_seconds\{account_id="acc_rl",event_name="signup"\} \d+/m);
     expect(res.text).not.toMatch(/event_name="purchase"/);
   });
+
+  it('records HTTP request metrics per method, route and status', async () => {
+    const res = await request(app).get('/metrics');
+    expect(res.text).toMatch(/^http_requests_total\{method="POST",route="\/ingest",status="201"\} 101$/m);
+    expect(res.text).toMatch(/^http_requests_total\{method="POST",route="\/ingest",status="429"\} 1$/m);
+    expect(res.text).toMatch(/^http_request_duration_seconds_count\{method="POST",route="\/ingest",status="201"\} 101$/m);
+  });
 });

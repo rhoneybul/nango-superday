@@ -19,7 +19,7 @@ Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 ```
 src/config/      plain object read from env (no schema library). ONLY place that reads process.env. Import `config` from here.
 src/routes.ts    URL → [validation middleware →] controller wiring only
-src/middleware/  request-id (AsyncLocalStorage, `currentRequestId()`), request-logger, rate-limit (express-rate-limit + Redis store; its `handler` records each 429 in the rate-limit metrics), validation (zod schemas for every input; typed result on `res.locals`)
+src/middleware/  request-id (AsyncLocalStorage, `currentRequestId()`), request-logger (also records the HTTP metrics), rate-limit (express-rate-limit + Redis store; its `handler` records each 429 in the rate-limit metrics), validation (zod schemas for every input; typed result on `res.locals`)
 src/controllers/ HTTP concerns only: read `res.locals`, call the service, set status + response shape. No try/catch, no validation.
 src/services/    business logic on already-validated input, including building the Prisma `where` (`EventWhere`).
 src/models/      Prisma data access for `events`: plain exported functions that receive a ready `where`. Raw SQL only for `countEventsByWindow`. `event-name.ts` holds the `EventName` enum.
@@ -54,7 +54,7 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
   - Repeated query params (`?account=a&account=b`) → 400. Empty string params are treated as absent.
 - Errors: `400 { error, details: [{ path, message }] }` for validation (`error` is the joined `path: message` list, e.g. `limit: must be between 1 and 1000`), `400 { error: "Malformed JSON body" }`, `500 { error: "Internal server error" }` otherwise (no leak; the error is logged).
 - `GET /health` → `{ status: "ok" }`.
-- `GET /metrics` → Prometheus text format from `registry` in `src/lib/metrics.ts`: `ingest_rate_limited_total{account_id,event_name}`, `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}`, Node default metrics.
+- `GET /metrics` → Prometheus text format from `registry` in `src/lib/metrics.ts`: `http_requests_total{method,route,status}` + `http_request_duration_seconds{method,route,status}` histogram (recorded in `requestLogger`; `route` is the matched Express route or `unmatched`), `ingest_rate_limited_total{account_id,event_name}`, `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}`, Node default metrics.
 - Every response carries `X-Request-Id` (echoes the incoming header, else a UUID). The id is in every log line for that request.
 
 ## Alerting
@@ -83,3 +83,7 @@ Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Red
 Phase 3 complete: k6-based event publisher (`load/`), no bespoke CLI. Docker image now copies `prisma.config.ts` (needed by `prisma migrate deploy` at container start) and `.dockerignore` also excludes `src/generated`, `load/results`, `.git`.
 Postman collection for manual testing: `postman/nango-events.postman_collection.json` (variables `baseUrl`, `accountId`).
 Phase 4 complete: rate-limit metrics + GET /metrics, Prometheus in compose, Grafana-provisioned alerting (RateLimitExceeded rule on Prometheus, Slack contact point, notification policy). 64 tests. Firing → resolved verified against a real Prometheus 3 + Grafana 13 with a webhook stand-in for Slack.
+
+## Dashboards
+
+Provisioned from `grafana/provisioning/dashboards/*.json` (loaded by `dashboards.yml` in the same directory; editable in the UI but not written back, so change the JSON). `http.json` ("API HTTP", uid `nango-http`) is Prometheus-backed: requests/s by route and by status, p95 latency, error rate, totals, rate-limit hits. `events.json` ("Events", uid `nango-events`) is Postgres-backed SQL over the `events` table: per-minute counts by name, share by name, totals, top accounts, latest events. Datasource uids: `prometheus`, `postgres`.

@@ -1,5 +1,5 @@
 import type { RequestHandler } from 'express';
-import { Counter, Gauge, Registry, collectDefaultMetrics } from 'prom-client';
+import { Counter, Gauge, Histogram, Registry, collectDefaultMetrics } from 'prom-client';
 
 /**
  * Prometheus metrics, served on GET /metrics and scraped by the `prometheus`
@@ -9,6 +9,24 @@ import { Counter, Gauge, Registry, collectDefaultMetrics } from 'prom-client';
  */
 export const registry = new Registry();
 collectDefaultMetrics({ register: registry });
+
+const httpLabels = ['method', 'route', 'status'] as const;
+
+/** One increment per finished HTTP request. `route` is the matched Express route, or "unmatched" for 404s. */
+export const httpRequests = new Counter({
+  name: 'http_requests_total',
+  help: 'HTTP requests handled, by method, matched route and status code',
+  labelNames: httpLabels,
+  registers: [registry],
+});
+
+export const httpRequestDuration = new Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'HTTP request duration in seconds, by method, matched route and status code',
+  labelNames: httpLabels,
+  buckets: [0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+  registers: [registry],
+});
 
 const rateLimitLabels = ['account_id', 'event_name'] as const;
 
