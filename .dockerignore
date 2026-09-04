@@ -3,3 +3,6 @@ dist
 .env
 test
 *.md
+src/generated
+load/results
+.git

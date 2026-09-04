@@ -58,6 +58,19 @@ With `window` the response is a count per time bucket (epoch-aligned via Postgre
 
 Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
 
+## Load testing
+
+```bash
+npm run load                          # load/example.json
+LOAD_CONFIG=my-run.json npm run load  # any file inside load/
+```
+
+Runs [k6](https://grafana.com/docs/k6/latest/) via Docker Compose against the API, one fixed-rate stream per
+`{ account_id, event_name, rps }` entry in the JSON config, for a configurable duration, and prints throughput,
+status-code counts and p50/p95/p99 latency. See [load/README.md](load/README.md) for the config format and how
+to read the report. The default example mixes streams that stay under the ingest rate limit with ones that
+trip it.
+
 ## Layout
 
 ```
@@ -71,6 +84,7 @@ src/
   lib/           prisma client, error type/handler, pino logger
   generated/     Prisma client output (gitignored, created by `prisma generate`)
 prisma/          schema + migrations
+load/            k6 load generator: publish.js + JSON run configs (see load/README.md)
 test/            vitest + supertest against the real app, model module mocked with vi.mock
 ```
 

@@ -6,7 +6,7 @@ services:
       POSTGRES_PASSWORD: nango
       POSTGRES_DB: nango
     ports:
-      - "5432:5432"
+      - "${DB_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -18,7 +18,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -34,7 +34,7 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
     ports:
-      - "3001:3000"
+      - "${GRAFANA_PORT:-3001}:3000"
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning
       - grafana-data:/var/lib/grafana
@@ -56,9 +56,30 @@ services:
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info
     ports:
-      - "3000:3000"
+      - "${API_PORT:-3000}:3000"
     # Apply migrations then start the server.
     command: sh -c "npx prisma migrate deploy && node dist/server.js"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+
+  # Load generator (k6). Behind a profile, so `docker compose up` does not start it.
+  # Run on demand with `npm run load` (uses load/example.json) or
+  # `LOAD_CONFIG=my-run.json npm run load` (any file inside ./load). See load/README.md.
+  k6:
+    image: grafana/k6:2.2.0
+    profiles: [load]
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      TARGET: http://api:3000
+    volumes:
+      - ./load:/load
+    working_dir: /load
+    command: run --summary-export=/load/results/summary.json -e CONFIG=/load/${LOAD_CONFIG:-example.json} /load/publish.js
 
 volumes:
   pgdata:
