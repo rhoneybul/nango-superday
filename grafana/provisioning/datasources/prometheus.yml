@@ -1,0 +1,7 @@
+# Metrics from the API (scraped by the prometheus compose service). Alert rules query this.
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    uid: prometheus   # referenced by provisioning/alerting/rules.yml
+    type: prometheus
+    url: http://prometheus:9090

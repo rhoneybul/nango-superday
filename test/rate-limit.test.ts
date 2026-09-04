@@ -25,4 +25,13 @@ describe('POST /ingest rate limit', () => {
     const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'purchase' });
     expect(res.status).toBe(201);
   });
+
+  it('records the rejection in the rate-limit metrics on GET /metrics', async () => {
+    const res = await request(app).get('/metrics');
+    expect(res.status).toBe(200);
+    expect(res.type).toBe('text/plain');
+    expect(res.text).toMatch(/^ingest_rate_limited_total\{account_id="acc_rl",event_name="signup"\} 1$/m);
+    expect(res.text).toMatch(/^ingest_rate_limited_last_seen_timestamp_seconds\{account_id="acc_rl",event_name="signup"\} \d+/m);
+    expect(res.text).not.toMatch(/event_name="purchase"/);
+  });
 });

@@ -1,0 +1,14 @@
+# How alerts are grouped and which contact point gets them.
+apiVersion: 1
+policies:
+  - orgId: 1
+    receiver: slack                                   # default for everything
+    group_by: ['alertname', 'account_id', 'event_name'] # one notification per account/event pair
+    group_wait: 0s                                    # notify as soon as an alert fires
+    group_interval: 30s                               # max delay before "resolved" follows resolution
+    repeat_interval: 1h                               # re-notify if still firing after this long
+    # Send some alerts elsewhere as well (see the webhook example in contact-points.yml):
+    # routes:
+    #   - receiver: ops-webhook
+    #     matchers: ['severity = critical']
+    #     continue: true                              # keep matching so Slack still gets it

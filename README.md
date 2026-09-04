@@ -8,7 +8,8 @@ Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
 docker compose up --build
 ```
 
-Starts Postgres on `:5432`, Redis on `:6379`, Grafana on `:3001` (login `admin`/`admin`, the events database is pre-configured as a datasource) and the API on `:3000`. Migrations are applied automatically on startup.
+Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied automatically on startup.
+For Slack alerts, put a Slack incoming-webhook URL for `#superday-rob` in `.env` as `SLACK_WEBHOOK_URL` before starting (see [Alerting](#alerting)).
 
 ## Run locally
 
@@ -30,7 +31,7 @@ npm run dev
 
 `event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database. Returns `201` with the stored event.
 
-Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory.
+Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
 
 ### `GET /events`
 
@@ -56,7 +57,29 @@ With `window` the response is a count per time bucket (epoch-aligned via Postgre
 { "window": "1h", "windowSeconds": 3600, "buckets": [{ "windowStart": "2026-09-01T10:00:00.000Z", "count": 2 }], "filters": {} }
 ```
 
+### `GET /metrics`
+
+Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest rejection), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
+
 Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
+
+## Alerting
+
+Event driven, no database involved: the rate limiter records each 429 it sends as a metric, Prometheus scrapes it, and [Grafana alerting](https://grafana.com/docs/grafana/latest/alerting/) does the rest. Everything on the Grafana side is provisioned from `grafana/provisioning/alerting/` and also editable in the UI under Alerting:
+
+- `rules.yml` — the alert rules. `RateLimitExceeded` evaluates `time() - ingest_rate_limited_last_seen_timestamp_seconds < 60` every 10s: an `account_id` + `event_name` pair is alerting while its latest rejection is under a minute old, and resolves after a minute without one. One alert instance per pair.
+- `contact-points.yml` — where alerts go. Slack `#superday-rob` (via `SLACK_WEBHOOK_URL`) is the only one; add a `webhook`, `pagerduty`, `email`, … receiver to the same contact point to fan every alert out to another consumer.
+- `notification-policies.yml` — grouping (one notification per pair) and routing. Add a route with matchers to send only some alerts to another contact point.
+
+Grafana handles state, deduplication and delivery. On firing, Slack gets:
+
+> :rotating_light: RateLimitExceeded — Account acc_1 is over its signup ingest limit: its signup events are being rejected with 429.
+
+Once the pair has gone a minute without a rejection the same contact points get:
+
+> :white_check_mark: Resolved: RateLimitExceeded — Account acc_1 is back under its signup ingest limit: no rejections for a minute.
+
+Adding an alert: record a metric in `src/lib/metrics.ts` at the point where the thing happens, then add a rule to `rules.yml` with a Prometheus query, a threshold, and `summary`/`resolved` annotations (one plain, actionable line each).
 
 ## Layout
 
@@ -68,9 +91,11 @@ src/
   controllers/   HTTP concerns: status codes, response shape
   services/      business logic (filter building, model calls) on validated input
   models/        Prisma data access (events table)
-  lib/           prisma client, error type/handler, pino logger
+  lib/           prisma client, error type/handler, pino logger, Prometheus metrics registry
   generated/     Prisma client output (gitignored, created by `prisma generate`)
 prisma/          schema + migrations
+prometheus/      scrape config (the API's /metrics)
+grafana/         Grafana provisioning: datasources (Postgres, Prometheus); alert rules, contact points, notification policies
 test/            vitest + supertest against the real app, model module mocked with vi.mock
 ```
 
