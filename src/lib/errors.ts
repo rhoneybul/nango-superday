@@ -1,34 +1,32 @@
-import type { NextFunction, Request, Response } from 'express';
+import type { ErrorRequestHandler } from 'express';
+import { log } from './logger';
 
-export class HttpError extends Error {
+/** Thrown for bad input. Rendered as a 400 by `errorHandler`. */
+export class ValidationError extends Error {
   constructor(
-    public readonly status: number,
     message: string,
-    public readonly details?: unknown,
+    /** Optional per-field breakdown, echoed in the response as `details`. */
+    public readonly details?: { path: string; message: string }[],
   ) {
     super(message);
-    this.name = 'HttpError';
-  }
-}
-
-export class ValidationError extends HttpError {
-  constructor(message: string, details?: unknown) {
-    super(400, message, details);
     this.name = 'ValidationError';
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction): void {
-  if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message, details: err.details ?? undefined });
+/**
+ * Single place where errors become HTTP responses. Express 5 routes both
+ * thrown errors and rejected promises here, so handlers need no try/catch.
+ */
+export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+  if (err instanceof ValidationError) {
+    res.status(400).json({ error: err.message, details: err.details });
     return;
   }
-  // Malformed JSON bodies from express.json()
-  if (err instanceof SyntaxError && 'body' in (err as object)) {
+  // express.json() throws a SyntaxError (with a `body` property) on malformed JSON.
+  if (err instanceof SyntaxError && 'body' in err) {
     res.status(400).json({ error: 'Malformed JSON body' });
     return;
   }
-  console.error(err);
+  log.error({ err }, 'unhandled error');
   res.status(500).json({ error: 'Internal server error' });
-}
+};

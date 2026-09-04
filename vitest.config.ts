@@ -9,6 +9,7 @@ export default defineConfig({
       DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
       EVENTS_DEFAULT_LIMIT: '50',
       EVENTS_MAX_LIMIT: '500',
+      LOG_LEVEL: 'silent',
     },
   },
 });

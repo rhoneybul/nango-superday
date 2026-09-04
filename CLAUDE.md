@@ -1,6 +1,6 @@
 # nango-events
 
-Event ingestion API. Express 4 + TypeScript + Prisma 7 (engine-free, `@prisma/adapter-pg`) + Postgres 16. No auth.
+Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/adapter-pg`) + Postgres 16. No auth.
 
 ## Commands
 
@@ -16,44 +16,51 @@ Event ingestion API. Express 4 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 ## Layout
 
 ```
-src/config/      typed config from env via Zod. ONLY place that reads process.env. Import `config` from here.
-src/routes/      URL → controller wiring only
-src/controllers/ HTTP concerns: status codes, response shape, `next(err)`. No validation logic.
-src/services/    all input validation + business logic. Throws ValidationError (400) from src/lib/errors.
-src/models/      Prisma data access for `events`. Receives already-validated input. Raw SQL only for `countByWindow`.
-src/lib/         prisma client (pg adapter), HttpError/ValidationError + errorHandler
-src/app.ts       createApp(deps) — deps injectable for tests
+src/config/      plain object read from env (no schema library). ONLY place that reads process.env. Import `config` from here.
+src/routes.ts    URL → [validation middleware →] controller wiring only
+src/middleware/  request-id (AsyncLocalStorage, `currentRequestId()`), request-logger, validation (zod schemas for every input; typed result on `res.locals`)
+src/controllers/ HTTP concerns only: read `res.locals`, call the service, set status + response shape. No try/catch, no validation.
+src/services/    business logic on already-validated input, including building the Prisma `where` (`EventWhere`).
+src/models/      Prisma data access for `events`: plain exported functions that receive a ready `where`. Raw SQL only for `countEventsByWindow`. `event-name.ts` holds the `EventName` enum.
+src/lib/         prisma client (pg adapter), ValidationError + errorHandler, pino `log`
+src/app.ts       exports the configured Express `app`
 src/server.ts    listen + graceful shutdown
 prisma/          schema.prisma + migrations (initial migration is hand-written; keep it in sync with schema)
-test/            vitest + supertest. helpers.ts builds the real app wired to a vi.fn() model stub.
+test/            vitest + supertest against the real `app`. Each test file `vi.mock`s the model module; helpers.ts resets the stubs to defaults.
 ```
 
-Dependency injection pattern: `createEventService(model)` → `createEventController(service)` → `createApp({ eventController })`. Add new resources the same way.
+No dependency injection: modules import each other directly (`routes` → `middleware/validation` → `controllers` → `services` → `models`). Tests swap the model with `vi.mock('../src/models/event.model')`.
+
+Request flow: `requestId` → `requestLogger` → `express.json` → route (`validateX` middleware throws `ValidationError` → 400, then controller) → `errorHandler`. Express 5 forwards thrown errors and rejected promises to `errorHandler`, so nothing else catches errors.
 
 ## Data model
 
 `events`: `id BIGSERIAL`, `account_id TEXT`, `event_name TEXT`, `timestamp TIMESTAMPTZ DEFAULT now()`, `created_at TIMESTAMPTZ`.
+`event_name` is validated against the `EventName` enum in `src/models/event-name.ts` (`signup`, `login`, `logout`, `purchase`) on ingest and on the `event` filter; the column itself stays text, so adding a value is a code change only, no migration.
 Indexes: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.
 BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 ## API
 
-- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`.
+- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`. Unknown `event_name` → 400 listing the allowed values.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
   - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`.
   - With `window` (`<n><s|m|h|d|w>`, e.g. `15m`, `1h`, `1d`): aggregated mode, `{ window, windowSeconds, buckets: [{ windowStart, count }], filters }`. Buckets are epoch-aligned via Postgres `date_bin`; empty buckets omitted.
   - Repeated query params (`?account=a&account=b`) → 400. Empty string params are treated as absent.
-- Errors: `400 { error, details? }` for validation, `500 { error: "Internal server error" }` otherwise (no leak).
+- Errors: `400 { error, details: [{ path, message }] }` for validation (`error` is the joined `path: message` list, e.g. `limit: must be between 1 and 1000`), `400 { error: "Malformed JSON body" }`, `500 { error: "Internal server error" }` otherwise (no leak; the error is logged).
 - `GET /health` → `{ status: "ok" }`.
+- Every response carries `X-Request-Id` (echoes the incoming header, else a UUID). The id is in every log line for that request.
 
 ## Conventions
 
-- Validation messages are asserted by regex in tests — changing wording means updating `test/`.
+- Validation is zod (`src/middleware/validation.ts`). Field messages are zod's defaults, prefixed with the field path; only refinements (window format, from/to order, limit range) carry custom wording. Tests assert messages by regex, so changing a schema means updating `test/`.
 - Test env (`vitest.config.ts`) sets `EVENTS_DEFAULT_LIMIT=50`, `EVENTS_MAX_LIMIT=500`; tests depend on those values.
-- Config is frozen; add new settings to the Zod schema + `Config` type in `src/config/index.ts`, and to `.env.example` and `docker-compose.yml`.
+- To add a setting, add one line to the `config` object in `src/config/index.ts` (use the `integer()` helper for numbers), and add it to `.env.example` and `docker-compose.yml`.
+- Logging is pino: `import { log } from '../lib/logger'`; `log.info({ fields }, 'message')` (object first, pino style). `requestId` is added to every line via a mixin. Errors go under the `err` key. `LOG_LEVEL` is `debug|info|warn|error|silent` (tests use `silent`). Never `console.log`.
+- To validate a new endpoint's input, add a zod schema + `validateX` middleware in `src/middleware/validation.ts` that sets `res.locals.x`, and type the controller as `Validated<{ x: XInput }>`.
 - Prisma engines can't be downloaded in some sandboxes; `PRISMA_SCHEMA_ENGINE_BINARY=/usr/bin/true npx prisma generate` still works for `generate` (WASM-based). `migrate` does need the real engine.
 
 ## Status
 
-Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package, 51 tests (43 on GET /events). Verified end-to-end against a real Postgres 16.
+Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package, 60 tests (44 on GET /events). Verified end-to-end against a real Postgres 16.

@@ -1,5 +1,11 @@
 import { Prisma } from '../generated/prisma/client';
 import { prisma } from '../lib/prisma';
+import type { EventName } from './event-name';
+
+/**
+ * Data access for the `events` table. No validation lives here: the service
+ * hands over already-validated input and a ready-made `where` clause.
+ */
 
 export interface EventRecord {
   id: string;
@@ -9,22 +15,11 @@ export interface EventRecord {
   createdAt: Date;
 }
 
-export interface CreateEventInput {
-  accountId: string;
-  eventName: string;
-  timestamp?: Date;
-}
-
-export interface EventFilter {
+/** Filter built by the service. Shaped so Prisma accepts it directly as a `where`. */
+export interface EventWhere {
   accountId?: string;
-  eventName?: string;
-  from?: Date;
-  to?: Date;
-}
-
-export interface FindEventsOptions extends EventFilter {
-  limit: number;
-  offset: number;
+  eventName?: EventName;
+  timestamp?: { gte?: Date; lte?: Date };
 }
 
 export interface WindowBucket {
@@ -32,77 +27,54 @@ export interface WindowBucket {
   count: number;
 }
 
+/** BigInt ids are not JSON-serialisable, so they go out as strings. */
 function toRecord(row: { id: bigint; accountId: string; eventName: string; timestamp: Date; createdAt: Date }): EventRecord {
   return { ...row, id: row.id.toString() };
 }
 
-function buildWhere(f: EventFilter): Prisma.EventWhereInput {
-  const where: Prisma.EventWhereInput = {};
-  if (f.accountId) where.accountId = f.accountId;
-  if (f.eventName) where.eventName = f.eventName;
-  if (f.from || f.to) {
-    where.timestamp = {};
-    if (f.from) where.timestamp.gte = f.from;
-    if (f.to) where.timestamp.lte = f.to;
-  }
-  return where;
+export async function createEvent(accountId: string, eventName: EventName, timestamp?: Date): Promise<EventRecord> {
+  const row = await prisma.event.create({
+    data: { accountId, eventName, timestamp }, // undefined timestamp → DB default now()
+  });
+  return toRecord(row);
+}
+
+export async function findEvents(where: EventWhere, limit: number, offset: number): Promise<EventRecord[]> {
+  const rows = await prisma.event.findMany({
+    where,
+    orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+    take: limit,
+    skip: offset,
+  });
+  return rows.map(toRecord);
+}
+
+export async function countEvents(where: EventWhere): Promise<number> {
+  return prisma.event.count({ where });
 }
 
 /**
- * Data-access layer for the `events` table. No validation lives here —
- * callers (services) are expected to hand over already-validated input.
+ * Counts events grouped into fixed-size time buckets of `windowSeconds`.
+ * Buckets are aligned to the Unix epoch via Postgres `date_bin`, so a 1h
+ * window always starts on the hour, a 1d window at 00:00 UTC, etc.
+ * Empty buckets are not returned.
  */
-export const eventModel = {
-  async create(input: CreateEventInput): Promise<EventRecord> {
-    const row = await prisma.event.create({
-      data: {
-        accountId: input.accountId,
-        eventName: input.eventName,
-        ...(input.timestamp ? { timestamp: input.timestamp } : {}),
-      },
-    });
-    return toRecord(row);
-  },
+export async function countEventsByWindow(where: EventWhere, windowSeconds: number): Promise<WindowBucket[]> {
+  const conditions: Prisma.Sql[] = [];
+  if (where.accountId) conditions.push(Prisma.sql`account_id = ${where.accountId}`);
+  if (where.eventName) conditions.push(Prisma.sql`event_name = ${where.eventName}`);
+  if (where.timestamp?.gte) conditions.push(Prisma.sql`"timestamp" >= ${where.timestamp.gte}`);
+  if (where.timestamp?.lte) conditions.push(Prisma.sql`"timestamp" <= ${where.timestamp.lte}`);
+  const whereSql = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
-  async findMany(opts: FindEventsOptions): Promise<EventRecord[]> {
-    const rows = await prisma.event.findMany({
-      where: buildWhere(opts),
-      orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
-      take: opts.limit,
-      skip: opts.offset,
-    });
-    return rows.map(toRecord);
-  },
-
-  async count(filter: EventFilter): Promise<number> {
-    return prisma.event.count({ where: buildWhere(filter) });
-  },
-
-  /**
-   * Counts events grouped into fixed-size time buckets of `windowSeconds`.
-   * Buckets are aligned to the Unix epoch via Postgres `date_bin`, so a 1h
-   * window always starts on the hour, a 1d window at 00:00 UTC, etc.
-   * Empty buckets are not returned.
-   */
-  async countByWindow(filter: EventFilter, windowSeconds: number): Promise<WindowBucket[]> {
-    const conditions: Prisma.Sql[] = [];
-    if (filter.accountId) conditions.push(Prisma.sql`account_id = ${filter.accountId}`);
-    if (filter.eventName) conditions.push(Prisma.sql`event_name = ${filter.eventName}`);
-    if (filter.from) conditions.push(Prisma.sql`"timestamp" >= ${filter.from}`);
-    if (filter.to) conditions.push(Prisma.sql`"timestamp" <= ${filter.to}`);
-    const where = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
-
-    const interval = `${windowSeconds} seconds`;
-    const rows = await prisma.$queryRaw<{ window_start: Date; count: bigint }[]>`
-      SELECT date_bin(${interval}::interval, "timestamp", TIMESTAMPTZ 'epoch') AS window_start,
-             COUNT(*)::bigint AS count
-      FROM events
-      ${where}
-      GROUP BY window_start
-      ORDER BY window_start ASC
-    `;
-    return rows.map((r) => ({ windowStart: r.window_start, count: Number(r.count) }));
-  },
-};
-
-export type EventModel = typeof eventModel;
+  const interval = `${windowSeconds} seconds`;
+  const rows = await prisma.$queryRaw<{ window_start: Date; count: bigint }[]>`
+    SELECT date_bin(${interval}::interval, "timestamp", TIMESTAMPTZ 'epoch') AS window_start,
+           COUNT(*)::bigint AS count
+    FROM events
+    ${whereSql}
+    GROUP BY window_start
+    ORDER BY window_start ASC
+  `;
+  return rows.map((r) => ({ windowStart: r.window_start, count: Number(r.count) }));
+}

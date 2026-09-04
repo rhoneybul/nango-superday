@@ -1,6 +1,6 @@
 # nango-events
 
-Barebones event ingestion API: Express + Prisma 7 + Postgres.
+Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
 
 ## Run with Docker
 
@@ -28,14 +28,14 @@ npm run dev
 { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
-`timestamp` is optional and defaults to `NOW()` in the database. Returns `201` with the stored event.
+`event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database. Returns `201` with the stored event.
 
 ### `GET /events`
 
 | Param     | Description                                                                 |
 |-----------|-----------------------------------------------------------------------------|
 | `account` | Filter by account id                                                        |
-| `event`   | Filter by event name                                                        |
+| `event`   | Filter by event name (must be a known `EventName`)                          |
 | `from`    | Inclusive lower bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `to`      | Inclusive upper bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `window`  | Bucket size, e.g. `30s`, `15m`, `1h`, `1d`, `1w`. Switches to aggregated mode |
@@ -54,21 +54,22 @@ With `window` the response is a count per time bucket (epoch-aligned via Postgre
 { "window": "1h", "windowSeconds": 3600, "buckets": [{ "windowStart": "2026-09-01T10:00:00.000Z", "count": 2 }], "filters": {} }
 ```
 
-Invalid input returns `400 { "error": "..." }`.
+Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
 
 ## Layout
 
 ```
 src/
-  config/        typed config loaded from env (single source of truth)
-  routes/        URL → controller wiring
+  config/        settings read from env (single source of truth)
+  routes.ts      URL → validation middleware → controller wiring
+  middleware/    request id, request logging, input validation (zod)
   controllers/   HTTP concerns: status codes, response shape
-  services/      input validation + business logic
+  services/      business logic (filter building, model calls) on validated input
   models/        Prisma data access (events table)
-  lib/           prisma client, error types/handler
+  lib/           prisma client, error type/handler, pino logger
   generated/     Prisma client output (gitignored, created by `prisma generate`)
 prisma/          schema + migrations
-test/            vitest + supertest, service/controller wired to a stubbed model
+test/            vitest + supertest against the real app, model module mocked with vi.mock
 ```
 
 Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.

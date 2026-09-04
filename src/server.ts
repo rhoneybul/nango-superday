@@ -1,20 +1,19 @@
-import { createApp } from './app';
+import { app } from './app';
 import { config } from './config';
+import { log } from './lib/logger';
 import { prisma } from './lib/prisma';
 
-const app = createApp();
-
 const server = app.listen(config.port, () => {
-  console.log(`[nango-events] listening on :${config.port} (${config.env})`);
+  log.info({ port: config.port, env: config.env }, 'listening');
 });
 
-async function shutdown(signal: string) {
-  console.log(`[nango-events] ${signal} received, shutting down`);
+function shutdown(signal: string) {
+  log.info({ signal }, 'shutting down');
   server.close(async () => {
     await prisma.$disconnect();
     process.exit(0);
   });
 }
 
-process.on('SIGINT', () => void shutdown('SIGINT'));
-process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

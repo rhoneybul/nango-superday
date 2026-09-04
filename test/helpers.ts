@@ -1,8 +1,12 @@
-import { vi } from 'vitest';
-import { createApp } from '../src/app';
-import { createEventController } from '../src/controllers/event.controller';
-import type { EventModel, EventRecord, WindowBucket } from '../src/models/event.model';
-import { createEventService } from '../src/services/event.service';
+import { beforeEach, vi } from 'vitest';
+import * as model from '../src/models/event.model';
+import type { EventRecord } from '../src/models/event.model';
+
+/**
+ * The model module, with every function replaced by a vi.fn() stub.
+ * Each test file must call `vi.mock('../src/models/event.model')` for this to apply.
+ */
+export const events = vi.mocked(model);
 
 export function makeEvent(overrides: Partial<EventRecord> = {}): EventRecord {
   return {
@@ -15,20 +19,13 @@ export function makeEvent(overrides: Partial<EventRecord> = {}): EventRecord {
   };
 }
 
-export function makeModel(overrides: Partial<EventModel> = {}) {
-  const model = {
-    create: vi.fn(async (input) => makeEvent({ accountId: input.accountId, eventName: input.eventName, timestamp: input.timestamp ?? new Date() })),
-    findMany: vi.fn(async () => [] as EventRecord[]),
-    count: vi.fn(async () => 0),
-    countByWindow: vi.fn(async () => [] as WindowBucket[]),
-    ...overrides,
-  } satisfies EventModel;
-  return model;
-}
-
-/** Builds a full Express app wired to a stubbed model. */
-export function buildApp(model: ReturnType<typeof makeModel> = makeModel()) {
-  const service = createEventService(model);
-  const controller = createEventController(service);
-  return { app: createApp({ eventController: controller }), model };
-}
+// Harmless defaults so a test only has to override what it cares about.
+beforeEach(() => {
+  vi.resetAllMocks();
+  events.createEvent.mockImplementation(async (accountId, eventName, timestamp) =>
+    makeEvent({ accountId, eventName, timestamp: timestamp ?? new Date() }),
+  );
+  events.findEvents.mockResolvedValue([]);
+  events.countEvents.mockResolvedValue(0);
+  events.countEventsByWindow.mockResolvedValue([]);
+});

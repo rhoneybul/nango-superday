@@ -1,46 +1,38 @@
 import 'dotenv/config';
-import { z } from 'zod';
 
 /**
- * Central configuration package.
- *
- * All runtime configuration is read from the environment once at startup,
- * validated, and exposed as a typed, frozen object. Anything that needs a
- * config value imports from here rather than reading process.env directly.
+ * All settings come from environment variables (`.env` is loaded in development).
+ * This is the only file that reads `process.env`; everything else imports `config`.
  */
-const schema = z.object({
-  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
-  PORT: z.coerce.number().int().positive().default(3000),
-  DATABASE_URL: z.string().min(1, 'DATABASE_URL is required'),
-  /** Default page size for GET /events when `limit` is not supplied. */
-  EVENTS_DEFAULT_LIMIT: z.coerce.number().int().positive().default(100),
-  /** Hard cap on page size for GET /events. */
-  EVENTS_MAX_LIMIT: z.coerce.number().int().positive().default(1000),
-  LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-});
+const env = process.env;
 
-export type Config = {
-  env: 'development' | 'test' | 'production';
-  port: number;
-  databaseUrl: string;
-  events: { defaultLimit: number; maxLimit: number };
-  logLevel: 'debug' | 'info' | 'warn' | 'error';
-};
+const LOG_LEVELS = ['debug', 'info', 'warn', 'error', 'silent'] as const;
+export type LogLevel = (typeof LOG_LEVELS)[number];
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = schema.safeParse(env);
-  if (!parsed.success) {
-    const issues = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    throw new Error(`Invalid configuration: ${issues}`);
-  }
-  const e = parsed.data;
-  return Object.freeze({
-    env: e.NODE_ENV,
-    port: e.PORT,
-    databaseUrl: e.DATABASE_URL,
-    events: Object.freeze({ defaultLimit: e.EVENTS_DEFAULT_LIMIT, maxLimit: e.EVENTS_MAX_LIMIT }),
-    logLevel: e.LOG_LEVEL,
-  });
+function integer(name: string, fallback: number): number {
+  const value = env[name];
+  if (value === undefined || value === '') return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n)) throw new Error(`${name} must be an integer, got "${value}"`);
+  return n;
 }
 
-export const config: Config = loadConfig();
+function logLevel(fallback: LogLevel): LogLevel {
+  const value = env.LOG_LEVEL ?? fallback;
+  if (!LOG_LEVELS.includes(value as LogLevel)) throw new Error(`LOG_LEVEL must be one of ${LOG_LEVELS.join(', ')}, got "${value}"`);
+  return value as LogLevel;
+}
+
+if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+
+export const config = {
+  env: env.NODE_ENV ?? 'development',
+  port: integer('PORT', 3000),
+  databaseUrl: env.DATABASE_URL,
+  logLevel: logLevel('info'),
+
+  /** Page size for GET /events when `limit` is not supplied. */
+  eventsDefaultLimit: integer('EVENTS_DEFAULT_LIMIT', 100),
+  /** Largest `limit` a caller may ask for on GET /events. */
+  eventsMaxLimit: integer('EVENTS_MAX_LIMIT', 1000),
+};
