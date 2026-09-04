@@ -6,6 +6,6 @@ import { defineConfig } from 'prisma/config';
 // variable is missing, but `generate` (run on npm install, e.g. in the Docker build) needs no URL.
 export default defineConfig({
   schema: 'prisma/schema.prisma',
-  migrations: { path: 'prisma/migrations' },
+  migrations: { path: 'prisma/migrations', seed: 'tsx src/seed.ts' },
   datasource: { url: process.env.DATABASE_URL ?? '' },
 });

@@ -4,6 +4,7 @@ import { app } from '../src/app';
 import './helpers';
 
 vi.mock('../src/models/event.model');
+vi.mock('../src/models/account.model');
 
 // No REDIS_URL in the test env, so the limiter uses its in-memory store.
 // This file gets a fresh module registry, and therefore a fresh store.

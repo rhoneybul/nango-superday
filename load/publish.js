@@ -7,12 +7,15 @@
  *     "target": "http://localhost:3000",
  *     "duration": "30s",
  *     "events": [
- *       { "account_id": "acc_1", "event_name": "signup", "rps": 20 },
- *       { "account_id": "acc_2", "event_name": "purchase", "rps": 5 }
+ *       { "account_id": "acc_acme", "event_name": "signup", "rps": 20 },
+ *       { "account_id": "acc_globex", "event_name": "purchase", "rps": 5 }
  *     ],
  *     "expectedStatuses": [201],
  *     "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
  *   }
+ *
+ * `account_id` must be a seeded account (src/models/seeded-accounts.ts); the API
+ * answers 404 for any other id, which is a handy way to exercise that path.
  *
  * Each entry in `events` becomes an independent k6 scenario using the
  * `constant-arrival-rate` executor, so every stream holds its own requests
@@ -23,7 +26,7 @@
  *        TARGET  overrides `target` from the file (used by docker compose: http://api:3000)
  *
  * Everything below `options` is plain k6. `handleSummary` at the bottom replaces
- * k6's default report with a short one: successful / rate limited / failed
+ * k6's default report with a short one: successful / rate limited / unknown account / failed
  * counts, one latency line, and the threshold results.
  */
 import http from 'k6/http';
@@ -152,19 +155,21 @@ export const options = {
 };
 
 // ---------------------------------------------------------------------------
-// Metrics: every response is exactly one of successful / rate limited / failed
+// Metrics: every response is exactly one of successful / rate limited / unknown account / failed
 // (failed = any other status, including 0 for a connection error or timeout)
 // ---------------------------------------------------------------------------
 
 const outcomes = {
   successful: new Counter('successful'),
   rate_limited: new Counter('rate_limited'),
+  unknown_account: new Counter('unknown_account'),
   failed: new Counter('failed'),
 };
 
 function outcome(status) {
   if (status === 201) return 'successful';
   if (status === 429) return 'rate_limited';
+  if (status === 404) return 'unknown_account';
   return 'failed';
 }
 
@@ -222,6 +227,7 @@ export function handleSummary(data) {
     '',
     line('successful (201)', 'successful'),
     line('rate limited (429)', 'rate_limited'),
+    line('unknown account (404)', 'unknown_account'),
     line('failed (other)', 'failed'),
     '',
     `  latency  p50=${ms('p(50)')}  p95=${ms('p(95)')}  p99=${ms('p(99)')}  avg=${ms('avg')}  max=${ms('max')}`,

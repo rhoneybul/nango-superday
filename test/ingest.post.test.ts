@@ -4,6 +4,7 @@ import { app } from '../src/app';
 import { events } from './helpers';
 
 vi.mock('../src/models/event.model');
+vi.mock('../src/models/account.model');
 
 describe('POST /ingest', () => {
   it('creates an event and defers timestamp to the DB default when omitted', async () => {

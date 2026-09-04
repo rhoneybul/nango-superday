@@ -24,3 +24,15 @@ model Event {
   @@index([eventName, timestamp])
   @@map("events")
 }
+
+// Seeded tenants (src/models/seeded-accounts.ts, applied by `npm run seed`).
+// Every account_id on POST /ingest and the GET /events `account` filter must
+// exist here; lookups are cached in Redis (src/services/account.service.ts).
+model Account {
+  id          String   @id
+  name        String
+  mainContact String   @map("main_contact")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("accounts")
+}

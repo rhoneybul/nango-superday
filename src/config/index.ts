@@ -39,4 +39,6 @@ export const config = {
   eventsMaxLimit: integer('EVENTS_MAX_LIMIT', 1000),
   /** POST /ingest requests allowed per minute for each `account_id:event_name`. */
   ingestRateLimitPerMinute: integer('INGEST_RATE_LIMIT_PER_MINUTE', 100),
+  /** How long a successful account lookup stays cached (Redis, or memory without REDIS_URL). */
+  accountCacheTtlSeconds: integer('ACCOUNT_CACHE_TTL_SECONDS', 300),
 };

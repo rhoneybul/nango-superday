@@ -5,6 +5,7 @@ import { log } from '../src/lib/logger';
 import { events } from './helpers';
 
 vi.mock('../src/models/event.model');
+vi.mock('../src/models/account.model');
 
 // vitest.config.ts silences logs for the other suites; this one needs them on.
 // `vi.hoisted` runs before the imports above, i.e. before config reads the env.

@@ -36,8 +36,8 @@ npm run load:local
   "target": "http://localhost:3000",
   "duration": "60s",
   "events": [
-    { "account_id": "acc_1", "event_name": "signup", "rps": 1 },
-    { "account_id": "acc_2", "event_name": "purchase", "rps": 5, "maxVUs": 50 }
+    { "account_id": "acc_acme", "event_name": "signup", "rps": 1 },
+    { "account_id": "acc_globex", "event_name": "purchase", "rps": 5, "maxVUs": 50 }
   ],
   "expectedStatuses": [201, 429],
   "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
@@ -49,11 +49,11 @@ npm run load:local
 | `target`                   | yes      | Base URL of the API. Overridden by the `TARGET` env var (compose sets it to `http://api:3000`).            |
 | `duration`                 | yes      | How long every stream runs: `<number><ms\|s\|m\|h>`, e.g. `30s`, `5m`.                                     |
 | `events[]`                 | yes      | One entry per stream. All streams run in parallel for the full `duration`.                                |
-| `events[].account_id`      | yes      | Sent as `account_id`.                                                                                     |
+| `events[].account_id`      | yes      | Sent as `account_id`. Must be a seeded account (`src/models/seeded-accounts.ts`), otherwise every request is a `404`. |
 | `events[].event_name`      | yes      | Sent as `event_name`. Unknown names are a handy way to generate `400`s.                                   |
 | `events[].rps`             | yes      | Requests per second for this stream. Fractions are fine (`0.5` = one request every 2s).                   |
 | `events[].maxVUs`          | no       | Cap on concurrent requests for the stream (default `max(20, 2 × rps)`). Raise it if k6 warns about VUs.   |
-| `expectedStatuses`         | no       | Statuses that count as success for the error rate (default `[201]`). Add `429` when limiting is expected. |
+| `expectedStatuses`         | no       | Statuses that count as success for the error rate (default `[201]`). Add `429` when limiting is expected, `404` when a stream uses an unknown account on purpose. |
 | `thresholds.p95Ms`         | no       | Fail the run (non-zero exit) if p95 latency across all requests is at or above this many ms.              |
 | `thresholds.maxErrorRate`  | no       | Fail the run if the fraction of unexpected statuses/network errors exceeds this (`0.01` = 1%).            |
 
@@ -68,6 +68,7 @@ Load summary: 1054 requests to http://api:3000/ingest over 60s (17.53/s)
 
   successful (201)         352    33.4%   5.86/s
   rate limited (429)       700    66.4%  11.65/s
+  unknown account (404)     30     2.8%   0.50/s
   failed (other)             2     0.2%   0.03/s
 
   latency  p50=5.28ms  p95=11.76ms  p99=308.38ms  avg=14.19ms  max=433.53ms
@@ -82,6 +83,7 @@ Thresholds:
 |-----------------------|---------------------------------------------------------------------------------------------------------------------|
 | `successful (201)`    | Events actually stored.                                                                                             |
 | `rate limited (429)`  | Rejected by the per `account_id` + `event_name` limit.                                                              |
+| `unknown account (404)` | `account_id` is not a seeded account (see `src/models/seeded-accounts.ts`).                                       |
 | `failed (other)`      | Everything else: `400` (bad input), `5xx`, or a connection error / timeout.                                         |
 | `latency`             | p50 / p95 / p99 / average / max over every request, in ms.                                                          |
 | `dropped iterations`  | Requests k6 could not start on time. Non-zero means the target rps was not reached: raise `maxVUs` or lower `rps`.  |
@@ -90,21 +92,26 @@ Thresholds:
 The full k6 data (every built-in metric, per-scenario tags) is still written to `load/results/summary.json`
 (git-ignored) if you need more detail.
 
-## Rate limiting in the example
+## Accounts and rate limiting in the example
+
+Every `account_id` must be one of the seeded accounts (`acc_acme`, `acc_globex`, `acc_initech`,
+`acc_umbrella`, `acc_hooli`; see `src/models/seeded-accounts.ts`). The API looks each one up in its
+Redis cache and answers `404` for anything else, so the cache is exercised on every request.
 
 `POST /ingest` allows `INGEST_RATE_LIMIT_PER_MINUTE` (100 by default) requests per minute for each
 `account_id` + `event_name` pair, so a stream at or below roughly 1.6 rps is always stored, and a faster
 stream gets `429` for the rest of each minute once it has used its 100. In `example.json`:
 
-| Stream                | rps | Requests in 60s | Stored | Rate limited |
-|-----------------------|-----|-----------------|--------|--------------|
-| `acc_1` / `signup`    | 1   | 60              | 60     | 0            |
-| `acc_1` / `login`     | 1.5 | 90              | 90     | 0            |
-| `acc_2` / `purchase`  | 5   | 300             | ~100   | ~200         |
-| `acc_3` / `login`     | 10  | 600             | ~100   | ~500         |
+| Stream                      | rps | Requests in 60s | Stored | Rate limited | Unknown account |
+|-----------------------------|-----|-----------------|--------|--------------|-----------------|
+| `acc_acme` / `signup`       | 1   | 60              | 60     | 0            | 0               |
+| `acc_acme` / `login`        | 1.5 | 90              | 90     | 0            | 0               |
+| `acc_globex` / `purchase`   | 5   | 300             | ~100   | ~200         | 0               |
+| `acc_initech` / `login`     | 10  | 600             | ~100   | ~500         | 0               |
+| `acc_unknown` / `signup`    | 0.5 | 30              | 0      | 0            | 30 (`404`)      |
 
-`expectedStatuses` includes `429` there so the error-rate threshold only trips on real failures. The
-`successful` / `rate limited` lines in the summary show the split.
+`expectedStatuses` includes `429` and `404` there so the error-rate threshold only trips on real failures.
+The `successful` / `rate limited` / `unknown account` lines in the summary show the split.
 
 ## Advanced
 
