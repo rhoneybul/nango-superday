@@ -13,6 +13,14 @@ export class ValidationError extends Error {
   }
 }
 
+/** Thrown when a referenced resource (an account) does not exist. Rendered as a 404 by `errorHandler`. */
+export class NotFoundError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'NotFoundError';
+  }
+}
+
 /**
  * Single place where errors become HTTP responses. Express 5 routes both
  * thrown errors and rejected promises here, so handlers need no try/catch.
@@ -20,6 +28,10 @@ export class ValidationError extends Error {
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   if (err instanceof ValidationError) {
     res.status(400).json({ error: err.message, details: err.details });
+    return;
+  }
+  if (err instanceof NotFoundError) {
+    res.status(404).json({ error: err.message });
     return;
   }
   // express.json() throws a SyntaxError (with a `body` property) on malformed JSON.

@@ -8,7 +8,7 @@ Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
 docker compose up --build
 ```
 
-Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`.
+Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied and the [accounts](#accounts) seeded automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`.
 For Slack alerts, put a Slack bot token in `.env` as `SLACK_BOT_TOKEN` before starting. The bot needs the `chat:write` scope and must be invited to `#superday-rob` (see [Alerting](#alerting)).
 
 ## Run locally
@@ -18,8 +18,29 @@ cp .env.example .env         # DATABASE_URL points at the compose Postgres by de
 docker compose up -d db
 npm install                  # also runs `prisma generate`
 npx prisma migrate deploy
+npm run seed                 # upsert the seeded accounts (src/models/seeded-accounts.ts)
 npm run dev
 ```
+
+## Accounts
+
+Events belong to accounts, and the API only accepts events for accounts it knows. The list lives in
+`src/models/seeded-accounts.ts` (`id`, `name`, `mainContact`) and `npm run seed` upserts it into the
+`accounts` table (compose does this on every start, so re-running is safe):
+
+| id             | name          | main contact                    |
+|----------------|---------------|---------------------------------|
+| `acc_acme`     | Acme Corp     | jane.doe@acme.example           |
+| `acc_globex`   | Globex        | hank.scorpio@globex.example     |
+| `acc_initech`  | Initech       | peter.gibbons@initech.example   |
+| `acc_umbrella` | Umbrella Corp | ops@umbrella.example            |
+| `acc_hooli`    | Hooli         | gavin.belson@hooli.example      |
+
+`POST /ingest` and the `account` filter on `GET /events` both check the id and answer
+`404 { "error": "Account acc_x not found" }` for anything else. The check is cached in Redis (`account:<id>`,
+`ACCOUNT_CACHE_TTL_SECONDS`, default 300; a miss is cached for 30s) so it costs a Redis round trip rather
+than a database query per request; without `REDIS_URL` the cache is in process memory. To onboard an
+account, add it to the list and run the seed; it is live within 30s.
 
 ## Endpoints
 
@@ -29,15 +50,15 @@ npm run dev
 { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
-`event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database; it may not be in the future. Returns `201` with the stored event.
+`account_id` must be a seeded [account](#accounts) (`404` otherwise). `event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database; it may not be in the future. Returns `201` with the stored event.
 
-Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
+Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. The account check runs before the limiter, so unknown accounts never consume quota. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
 
 ### `GET /events`
 
 | Param     | Description                                                                 |
 |-----------|-----------------------------------------------------------------------------|
-| `account` | Filter by account id                                                        |
+| `account` | Filter by account id (must be a seeded account, `404` otherwise)            |
 | `event`   | Filter by event name (must be a known `EventName`)                          |
 | `from`    | Inclusive lower bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `to`      | Inclusive upper bound on `timestamp` (ISO-8601 or epoch ms)                 |
@@ -63,7 +84,7 @@ Includes `http_requests_total` and `http_request_duration_seconds` (labels `meth
 
 Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest rejection), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
 
-Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
+Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`; an unknown account returns `404 { "error": "Account acc_x not found" }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
 
 ## Alerting
 
@@ -93,8 +114,8 @@ LOAD_CONFIG=my-run.json npm run load  # any file inside load/
 Runs [k6](https://grafana.com/docs/k6/latest/) via Docker Compose against the API, one fixed-rate stream per
 `{ account_id, event_name, rps }` entry in the JSON config, for a configurable duration, and prints throughput,
 status-code counts and p50/p95/p99 latency. See [load/README.md](load/README.md) for the config format and how
-to read the report. The default example mixes streams that stay under the ingest rate limit with ones that
-trip it.
+to read the report. The default example uses the seeded accounts and mixes streams that stay under the ingest
+rate limit with ones that trip it, plus one unknown account that is answered with `404`.
 
 ## Layout
 
@@ -102,12 +123,13 @@ trip it.
 src/
   config/        settings read from env (single source of truth)
   routes.ts      URL → validation middleware → controller wiring
-  middleware/    request id, request logging, rate limiting, input validation (zod)
+  middleware/    request id, request logging, input validation (zod), account check (404), rate limiting
   controllers/   HTTP concerns: status codes, response shape
-  services/      business logic (filter building, model calls) on validated input
-  models/        Prisma data access (events table)
-  lib/           prisma client, error type/handler, pino logger, Prometheus metrics registry
+  services/      business logic (filter building, model calls) on validated input; cached account lookups
+  models/        Prisma data access (events, accounts tables), the seeded account list
+  lib/           prisma client, shared Redis client + cache, error types/handler, pino logger, Prometheus metrics registry
   generated/     Prisma client output (gitignored, created by `prisma generate`)
+  seed.ts        upserts the seeded accounts (`npm run seed`; run by compose on start)
 prisma/          schema + migrations
 prometheus/      scrape config (the API's /metrics)
 grafana/         Grafana provisioning: datasources (Postgres, Prometheus); alert rules, contact points, notification policies
@@ -123,7 +145,7 @@ Grafana (`:3001`) comes with two provisioned dashboards: **API HTTP** (requests/
 
 ## Postman
 
-Import `postman/nango-events.postman_collection.json`. It covers valid ingests, each kind of invalid input, the rate limit (run the "Rate limit" request 101 times with the Collection Runner), and the query endpoint. Set the `baseUrl` variable if the API is not on `http://localhost:3000`.
+Import `postman/nango-events.postman_collection.json`. It covers the health and metrics endpoints, valid ingests, each kind of invalid input, unknown accounts (`404`), the rate limit (run the "Rate limit" request 101 times with the Collection Runner), and the query endpoint. The `accountId` variable defaults to the seeded `acc_acme`; set `baseUrl` if the API is not on `http://localhost:3000`.
 
 ## Tests
 
@@ -131,4 +153,4 @@ Import `postman/nango-events.postman_collection.json`. It covers valid ingests, 
 npm test
 ```
 
-No database required — the model layer is stubbed and the tests focus on `GET /events` parameter handling.
+No database or Redis required — the model layer is stubbed (events and accounts) and the account cache runs in memory.

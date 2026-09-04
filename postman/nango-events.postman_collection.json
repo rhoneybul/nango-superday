@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "nango-events",
-    "description": "Requests that exercise every path of the events API: valid ingests, each kind of invalid input, the per account_id:event_name rate limit, and the query endpoint. Each request asserts its expected status code, so the whole collection can be run with the Collection Runner or newman.",
+    "description": "Requests that exercise every path of the events API: valid ingests, each kind of invalid input, unknown accounts (404), the per account_id:event_name rate limit, the query endpoint and the Prometheus metrics. account_id values must be seeded accounts (src/models/seeded-accounts.ts); the accountId variable defaults to acc_acme. Each request asserts its expected status code, so the whole collection can be run with the Collection Runner or newman.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -11,7 +11,7 @@
     },
     {
       "key": "accountId",
-      "value": "postman_acc"
+      "value": "acc_acme"
     }
   ],
   "item": [
@@ -42,6 +42,36 @@
           ]
         },
         "description": ""
+      }
+    },
+    {
+      "name": "Metrics",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+              "pm.test(\"prometheus text format\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain\"));",
+              "pm.test(\"exposes the rate-limit metrics\", () => pm.expect(pm.response.text()).to.include(\"ingest_rate_limited_total\"));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/metrics",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "metrics"
+          ]
+        },
+        "description": "Prometheus exposition scraped by the prometheus compose service. Rate-limit series (ingest_rate_limited_total, ingest_rate_limited_last_seen_timestamp_seconds) appear once something has been rate limited."
       }
     },
     {
@@ -168,6 +198,44 @@
       "name": "Ingest - invalid",
       "description": "",
       "item": [
+        {
+          "name": "Unknown account",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"names the account\", () => pm.expect(pm.response.json().error).to.eql(\"Account acc_unknown not found\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "description": "account_id is not one of the seeded accounts, so nothing is stored. Unknown accounts are rejected before the rate limit, so this never consumes quota.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"acc_unknown\",\n  \"event_name\": \"signup\"\n}"
+            }
+          }
+        },
         {
           "name": "Unknown event name",
           "event": [
@@ -551,7 +619,7 @@
     },
     {
       "name": "Ingest - rate limit",
-      "description": "The limit is INGEST_RATE_LIMIT_PER_MINUTE (default 100) per account_id:event_name.",
+      "description": "The limit is INGEST_RATE_LIMIT_PER_MINUTE (default 100) per account_id:event_name. Uses the seeded account acc_umbrella so it never blocks the other requests.",
       "item": [
         {
           "name": "Rate limit (run 101 times)",
@@ -584,10 +652,10 @@
                 "ingest"
               ]
             },
-            "description": "Run this with the Collection Runner set to 101 iterations: the first 100 return 201, the 101st returns 429 with RateLimit-* headers. Uses its own account so it never blocks the other requests.",
+            "description": "Run this with the Collection Runner set to 101 iterations: the first 100 return 201, the 101st returns 429 with RateLimit-* headers. Uses the seeded account acc_umbrella (Umbrella Corp) so it never blocks the other requests.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"ratelimit_acc\",\n  \"event_name\": \"logout\"\n}"
+              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"logout\"\n}"
             }
           }
         },
@@ -624,7 +692,7 @@
             "description": "Send after the request above has hit 429: the limit is per account_id + event_name, so a different event name is still served.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"ratelimit_acc\",\n  \"event_name\": \"signup\"\n}"
+              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"signup\"\n}"
             }
           }
         }
@@ -933,6 +1001,41 @@
               ]
             },
             "description": ""
+          }
+        },
+        {
+          "name": "Invalid: unknown account filter",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
+                  "pm.test(\"names the account\", () => pm.expect(pm.response.json().error).to.eql(\"Account acc_unknown not found\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account=acc_unknown",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "acc_unknown"
+                }
+              ]
+            },
+            "description": "The account filter must name a seeded account."
           }
         }
       ]

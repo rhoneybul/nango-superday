@@ -1,14 +1,14 @@
 import rateLimit from 'express-rate-limit';
 import { RedisStore } from 'rate-limit-redis';
-import { createClient } from 'redis';
 import { config } from '../config';
-import { log } from '../lib/logger';
 import { ingestRateLimited, ingestRateLimitedLastSeen } from '../lib/metrics';
+import { redis, type RedisClient } from '../lib/redis';
+import type { IngestInput } from '../services/event.service';
 
-function redisStore(url: string) {
-  const client = createClient({ url });
-  client.on('error', (err) => log.error({ err }, 'redis error'));
-  void client.connect();
+/** Set by validateIngest, which runs before the limiter. */
+type IngestLocals = { ingest: IngestInput };
+
+function redisStore(client: RedisClient) {
   return new RedisStore({ sendCommand: (...args: string[]) => client.sendCommand(args) });
 }
 
@@ -22,13 +22,17 @@ function redisStore(url: string) {
 export const ingestRateLimit = rateLimit({
   windowMs: 60_000,
   limit: config.ingestRateLimitPerMinute,
-  keyGenerator: (req) => `${req.body?.account_id}:${req.body?.event_name}`,
+  keyGenerator: (_req, res) => {
+    const { ingest } = res.locals as IngestLocals;
+    return `${ingest.accountId}:${ingest.eventName}`;
+  },
   message: { error: 'Too many requests' },
   standardHeaders: true,
   legacyHeaders: false,
-  store: config.redisUrl ? redisStore(config.redisUrl) : undefined,
-  handler: (req, res, _next, options) => {
-    const labels = { account_id: String(req.body?.account_id), event_name: String(req.body?.event_name) };
+  store: redis ? redisStore(redis) : undefined,
+  handler: (_req, res, _next, options) => {
+    const { ingest } = res.locals as IngestLocals;
+    const labels = { account_id: ingest.accountId, event_name: ingest.eventName };
     ingestRateLimited.inc(labels);
     ingestRateLimitedLastSeen.set(labels, Date.now() / 1000);
     res.status(options.statusCode).json(options.message);

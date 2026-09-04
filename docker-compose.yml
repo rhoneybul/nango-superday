@@ -66,12 +66,13 @@ services:
       EVENTS_DEFAULT_LIMIT: 100
       EVENTS_MAX_LIMIT: 1000
       INGEST_RATE_LIMIT_PER_MINUTE: 100
+      ACCOUNT_CACHE_TTL_SECONDS: 300
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info
     ports:
       - "${API_PORT:-3000}:3000"
-    # Apply migrations then start the server.
-    command: sh -c "npx prisma migrate deploy && node dist/server.js"
+    # Apply migrations, seed the accounts (idempotent), then start the server.
+    command: sh -c "npx prisma migrate deploy && node dist/seed.js && node dist/server.js"
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
       interval: 2s
