@@ -1,0 +1,26 @@
+// Prisma 7: engine-free client. The datasource URL lives in prisma.config.ts
+// (used by the CLI for migrations); the runtime connects via @prisma/adapter-pg
+// using the URL from the config package.
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Event {
+  id        BigInt   @id @default(autoincrement())
+  accountId String   @map("account_id")
+  eventName String   @map("event_name")
+  timestamp DateTime @default(now()) @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  // Composite indexes covering the query patterns of GET /events:
+  //   account + time range, account + event + time range, event + time range.
+  @@index([accountId, timestamp])
+  @@index([accountId, eventName, timestamp])
+  @@index([eventName, timestamp])
+  @@map("events")
+}
