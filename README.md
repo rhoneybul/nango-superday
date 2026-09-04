@@ -28,7 +28,7 @@ npm run dev
 { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
-`event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database. Returns `201` with the stored event.
+`event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database; it may not be in the future. Returns `201` with the stored event.
 
 Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory.
 
@@ -89,6 +89,10 @@ test/            vitest + supertest against the real app, model module mocked wi
 ```
 
 Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.
+
+## Postman
+
+Import `postman/nango-events.postman_collection.json`. It covers valid ingests, each kind of invalid input, the rate limit (run the "Rate limit" request 101 times with the Collection Runner), and the query endpoint. Set the `baseUrl` variable if the API is not on `http://localhost:3000`.
 
 ## Tests
 

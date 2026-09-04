@@ -44,7 +44,7 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 ## API
 
-- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`. Rate limited per `account_id:event_name` to `INGEST_RATE_LIMIT_PER_MINUTE` (100) → `429 { error: "Too many requests" }` with `RateLimit-*` headers. Counters in Redis when `REDIS_URL` is set, otherwise in-process memory. Unknown `event_name` → 400 listing the allowed values.
+- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`; a timestamp in the future → 400. Rate limited per `account_id:event_name` to `INGEST_RATE_LIMIT_PER_MINUTE` (100) → `429 { error: "Too many requests" }` with `RateLimit-*` headers. Counters in Redis when `REDIS_URL` is set, otherwise in-process memory. Unknown `event_name` → 400 listing the allowed values.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
   - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`.
@@ -66,5 +66,10 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 ## Status
 
 Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package. Verified end-to-end against a real Postgres 16.
+<<<<<<< HEAD
 Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose. 62 tests.
 Phase 3 complete: k6-based event publisher (`load/`), no bespoke CLI. Docker image now copies `prisma.config.ts` (needed by `prisma migrate deploy` at container start) and `.dockerignore` also excludes `src/generated`, `load/results`, `.git`.
+=======
+Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose. 63 tests.
+Postman collection for manual testing: `postman/nango-events.postman_collection.json` (variables `baseUrl`, `accountId`).
+>>>>>>> 3f01e83 (feat: create collection for key requests)
