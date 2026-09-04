@@ -52,9 +52,22 @@ To add one, add the id to the list and run `npm run seed`.
 
 | Field        | Meaning                                                                                              |
 |--------------|------------------------------------------------------------------------------------------------------|
-| `event_name` | What was metered: `api_request`, `sync_run`, `records_synced`, `action_executed`, `webhook_received`, `connection_created` |
-| `metadata`   | Optional object with anything billing or debugging needs (connection id, provider, model, record count, …). Up to 4 KB |
+| `event_name` | What was metered; one of the catalogue below                                                        |
+| `metadata`   | Required. Must carry the fields the catalogue lists for that event; anything extra is kept. Up to 4 KB |
 | `timestamp`  | Optional, defaults to now, may not be in the future                                                 |
+
+The catalogue (`src/models/event-catalog.ts`, also served by `GET /event-types`) says what each event means for billing:
+
+| Event                | Billable unit | Quantity per event      | Required metadata                         |
+|----------------------|---------------|-------------------------|-------------------------------------------|
+| `api_request`        | requests      | 1                       | `connection_id`, `provider`, `endpoint`   |
+| `sync_run`           | sync runs     | 1                       | `connection_id`, `sync`                   |
+| `records_synced`     | records       | `metadata.records`      | `connection_id`, `model`, `records`       |
+| `action_executed`    | actions       | 1                       | `connection_id`, `action`                 |
+| `webhook_received`   | webhooks      | 1                       | `connection_id`, `provider`               |
+| `connection_created` | connections   | 1                       | `connection_id`, `provider`               |
+
+A missing or mistyped field is a `400` naming it (`metadata.records: …`). To meter something new, add an entry to the catalogue: validation and `GET /event-types` follow.
 
 The event is published to the queue and stored by the consumer a moment later; the response echoes what was queued.
 
@@ -65,15 +78,19 @@ The event is published to the queue and stored by the consumer a moment later; t
               { "account_id": "acc_acme", "event_name": "records_synced", "timestamp": "2026-09-01T10:00:05Z", "metadata": { "records": 1200 } } ] }
 ```
 
-1 to 100 events, each with a required `timestamp`. Valid events are queued; each one that is not comes back in `errors`
+1 to 100 events, each with a required `timestamp`. Valid events are queued and counted in `success`; each one that is not comes back in `errors`
 with its position in the batch and why (`invalid`, `unknown_account` or `rate_limited`):
 
 ```json
-{ "data": { "queued": 2, "failed": 1,
+{ "data": { "success": 2, "failed": 1,
             "errors": [ { "index": 1, "path": "events.1.event_name", "message": "Invalid option: …", "reason": "invalid" } ] } }
 ```
 
 `202` when at least one event was queued, `400` when none were, `429` when none were because of the rate limit.
+
+### `GET /event-types` → 200
+
+The catalogue above as JSON: `{ "data": [ { "name", "description", "unit", "metadata": { field: type } } ] }`.
 
 ### `GET /events` → 200
 
@@ -111,10 +128,12 @@ Every response carries an `X-Request-Id` header; the same id is on every log lin
 | Endpoint             | Limit                                          | Setting                              |
 |----------------------|------------------------------------------------|--------------------------------------|
 | `POST /ingest`       | 100 per minute per account + event name        | `INGEST_RATE_LIMIT_PER_MINUTE`       |
-| `POST /ingest/batch` | 10 batches per minute per account in the batch | `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` |
+| `POST /ingest/batch` | 10 batches per minute per account, **and** each event counts against the account + event name limit above | `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` |
 
-Over the limit: `429 { "error": "Too many requests" }`. Keying single ingest on account + event means a noisy event
-never blocks a customer's other events, and every customer stays well under the system's 100 events/s.
+Over the limit a single ingest gets `429 { "error": "Too many requests" }`; in a batch the affected events come back in
+`errors` with reason `rate_limited` and the rest are queued. The account + event counter is one counter whichever endpoint
+the events arrive through, so 100 of one kind per minute is the ceiling either way. Keying on account + event means a noisy
+event never blocks a customer's other events, and every customer stays well under the system's 100 events/s.
 Counters live in Redis so the limit holds across API replicas. Unknown accounts are rejected before the limiter and use no quota.
 
 To trigger it: send 101 events for one account and event within a minute, for example

@@ -11,8 +11,8 @@ export interface EventRecord {
   id: string;
   accountId: string;
   eventName: string;
-  /** Free-form context for billing or debugging, or null. */
-  metadata: Record<string, unknown> | null;
+  /** The event's metadata as sent (fields per src/models/event-catalog.ts). */
+  metadata: Record<string, unknown>;
   timestamp: Date;
   createdAt: Date;
 }
@@ -21,7 +21,7 @@ export interface EventRecord {
 export interface NewEvent {
   accountId: string;
   eventName: EventName;
-  metadata?: Record<string, unknown>;
+  metadata: Record<string, unknown>;
   timestamp: Date;
 }
 
@@ -34,12 +34,12 @@ export interface EventWhere {
 
 /** BigInt ids are not JSON-serialisable, so they go out as strings. */
 function toRecord(row: { id: bigint; accountId: string; eventName: string; metadata: unknown; timestamp: Date; createdAt: Date }): EventRecord {
-  return { ...row, id: row.id.toString(), metadata: (row.metadata as Record<string, unknown> | null) ?? null };
+  return { ...row, id: row.id.toString(), metadata: (row.metadata as Record<string, unknown> | null) ?? {} };
 }
 
 export async function createEvent(event: NewEvent): Promise<EventRecord> {
   const row = await prisma.event.create({
-    data: { ...event, metadata: event.metadata as Prisma.InputJsonValue | undefined },
+    data: { ...event, metadata: event.metadata as Prisma.InputJsonValue },
   });
   return toRecord(row);
 }

@@ -1,4 +1,6 @@
+import type { RequestHandler } from 'express';
 import type { Validated } from '../middleware/validation';
+import { describeEventTypes } from '../models/event-catalog';
 import { ingestBatch, ingestEvent, listEvents, type BatchState, type IngestInput, type ListEventsInput } from '../services/event.service';
 
 /**
@@ -19,10 +21,15 @@ export const ingest: Validated<{ ingest: IngestInput }> = async (_req, res) => {
  */
 export const ingestBatchEvents: Validated<{ batch: BatchState }> = async (_req, res) => {
   const result = await ingestBatch(res.locals.batch);
-  const status = result.queued > 0 ? 202 : result.errors.every((e) => e.reason === 'rate_limited') ? 429 : 400;
+  const status = result.success > 0 ? 202 : result.errors.every((e) => e.reason === 'rate_limited') ? 429 : 400;
   res.status(status).json({ data: result });
 };
 
 export const list: Validated<{ listEvents: ListEventsInput }> = async (_req, res) => {
   res.status(200).json(await listEvents(res.locals.listEvents));
+};
+
+/** The metering catalogue: what can be metered, its billable unit, and the metadata each event must carry. */
+export const eventTypes: RequestHandler = (_req, res) => {
+  res.json({ data: describeEventTypes() });
 };

@@ -17,8 +17,8 @@ import { publishEvent } from '../queue/publisher';
 export interface IngestInput {
   accountId: string;
   eventName: EventName;
-  /** Free-form context for billing or debugging. */
-  metadata?: Record<string, unknown>;
+  /** The fields the event's catalogue entry requires, plus anything extra the client sent. */
+  metadata: Record<string, unknown>;
   /** Omitted → the time the API received the event. */
   timestamp?: Date;
 }
@@ -33,7 +33,7 @@ export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
 /**
  * A batch in flight. Each middleware in the chain moves events it rejects
  * from `accepted` to `errors`; whatever is still accepted at the end is queued.
- * So one request can partly succeed: clients get `queued` plus one error per
+ * So one request can partly succeed: clients get a `success` count plus one error per
  * event that did not make it, with its position in the batch they sent.
  */
 export interface BatchState {
@@ -50,16 +50,18 @@ export interface BatchError {
 }
 
 export interface BatchResult {
-  queued: number;
+  /** Events accepted and published to the queue. */
+  success: number;
+  /** Events that were not (an event with several problems counts once). */
   failed: number;
   errors: BatchError[];
 }
 
-/** Publishes every still-accepted event of a batch and reports the outcome, errors in batch order. */
+/** Publishes every still-accepted event of a batch and reports `success` / `failed` counts, errors in batch order. */
 export async function ingestBatch(batch: BatchState): Promise<BatchResult> {
   await Promise.all(batch.accepted.map(({ input }) => ingestEvent(input)));
   const errors = [...batch.errors].sort((a, b) => a.index - b.index);
-  return { queued: batch.accepted.length, failed: errors.length, errors };
+  return { success: batch.accepted.length, failed: new Set(errors.map((e) => e.index)).size, errors };
 }
 
 // ---------------------------------------------------------------------------

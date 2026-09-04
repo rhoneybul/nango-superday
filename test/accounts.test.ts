@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { app } from '../src/app';
-import { accounts, events, publisher } from './helpers';
+import { META, accounts, events, publisher } from './helpers';
 
 vi.mock('../src/models/event.model');
 vi.mock('../src/models/account.model');
@@ -10,7 +10,7 @@ vi.mock('../src/queue/publisher');
 describe('account validation', () => {
   describe('POST /ingest', () => {
     it('accepts an event for a known account', async () => {
-      const res = await request(app).post('/ingest').send({ account_id: 'acc_known', event_name: 'connection_created' });
+      const res = await request(app).post('/ingest').send({ account_id: 'acc_known', event_name: 'connection_created', metadata: META.connection_created });
       expect(res.status).toBe(202);
       expect(accounts.accountExists).toHaveBeenCalledWith('acc_known');
       expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc_known', eventName: 'connection_created' }));
@@ -18,7 +18,7 @@ describe('account validation', () => {
 
     it('returns 404 for an unknown account and queues nothing', async () => {
       accounts.accountExists.mockResolvedValueOnce(false);
-      const res = await request(app).post('/ingest').send({ account_id: 'acc_nope', event_name: 'connection_created' });
+      const res = await request(app).post('/ingest').send({ account_id: 'acc_nope', event_name: 'connection_created', metadata: META.connection_created });
       expect(res.status).toBe(404);
       expect(res.body).toEqual({ error: 'Account acc_nope not found' });
       expect(publisher.publishEvent).not.toHaveBeenCalled();
@@ -32,11 +32,11 @@ describe('account validation', () => {
 
       // Unknown account: rejected before the limiter, so no RateLimit-* headers and no quota used.
       accounts.accountExists.mockResolvedValueOnce(false);
-      const unknown = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'connection_created' });
+      const unknown = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'connection_created', metadata: META.connection_created });
       expect(unknown.status).toBe(404);
       expect(unknown.headers['ratelimit-limit']).toBeUndefined();
 
-      const known = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'connection_created' });
+      const known = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'connection_created', metadata: META.connection_created });
       expect(known.status).toBe(202);
       expect(known.headers['ratelimit-limit']).toBe('100');
     });

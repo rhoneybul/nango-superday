@@ -12,6 +12,7 @@ router.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 router.get('/metrics', metrics);
+router.get('/event-types', eventController.eventTypes);
 router.post('/ingest', validateIngest, requireIngestAccount, ingestRateLimit, eventController.ingest);
 router.post('/ingest/batch', validateIngestBatch, requireBatchAccounts, batchRateLimit, eventController.ingestBatchEvents);
 router.get('/events', validateListEvents, requireEventsAccount, eventController.list);

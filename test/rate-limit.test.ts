@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { app } from '../src/app';
-import './helpers';
+import { META } from './helpers';
 
 vi.mock('../src/models/event.model');
 vi.mock('../src/models/account.model');
@@ -13,18 +13,18 @@ vi.mock('../src/queue/publisher');
 describe('POST /ingest rate limit', () => {
   it('allows 100 per minute per account_id:event_name, then returns 429', async () => {
     for (let i = 0; i < 100; i++) {
-      const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'connection_created' });
+      const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'connection_created', metadata: META.connection_created });
       expect(res.status).toBe(202);
     }
 
-    const blocked = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'connection_created' });
+    const blocked = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'connection_created', metadata: META.connection_created });
     expect(blocked.status).toBe(429);
     expect(blocked.body).toEqual({ error: 'Too many requests' });
     expect(blocked.headers['ratelimit-limit']).toBe('100');
   });
 
   it('does not block other events for the same account', async () => {
-    const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'sync_run' });
+    const res = await request(app).post('/ingest').send({ account_id: 'acc_rl', event_name: 'sync_run', metadata: META.sync_run });
     expect(res.status).toBe(202);
   });
 

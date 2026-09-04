@@ -155,9 +155,39 @@ export function setup() {
   fail(`${TARGET}/health did not return 200 within 30s`);
 }
 
+/** Each event must carry the metadata its catalogue entry requires (src/models/event-catalog.ts). Unknown names get none (used to generate 400s). */
+const METADATA = {
+  "api_request": {
+    "connection_id": "conn_42",
+    "provider": "salesforce",
+    "endpoint": "/services/data/v60.0/query"
+  },
+  "sync_run": {
+    "connection_id": "conn_42",
+    "sync": "contacts"
+  },
+  "records_synced": {
+    "connection_id": "conn_42",
+    "model": "Contact",
+    "records": 250
+  },
+  "action_executed": {
+    "connection_id": "conn_42",
+    "action": "create-contact"
+  },
+  "webhook_received": {
+    "connection_id": "conn_42",
+    "provider": "hubspot"
+  },
+  "connection_created": {
+    "connection_id": "conn_42",
+    "provider": "hubspot"
+  }
+};
+
 export function publish() {
   const entry = ENTRIES[exec.scenario.name];
-  const body = JSON.stringify({ account_id: entry.account_id, event_name: entry.event_name });
+  const body = JSON.stringify({ account_id: entry.account_id, event_name: entry.event_name, metadata: METADATA[entry.event_name] });
   const res = http.post(`${TARGET}/ingest`, body, {
     headers: { 'Content-Type': 'application/json' },
     tags: { name: 'ingest' },

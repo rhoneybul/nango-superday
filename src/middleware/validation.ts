@@ -2,6 +2,7 @@ import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
 import { HttpError } from '../lib/errors';
+import { EVENT_CATALOG } from '../models/event-catalog';
 import { EventName } from '../models/event-name';
 import type { BatchState, IngestInput, ListEventsInput } from '../services/event.service';
 
@@ -34,17 +35,25 @@ const pastDate = date.refine((d) => d <= new Date(), 'must not be in the future'
 
 const METADATA_MAX_BYTES = 4096;
 
-/** One metered event as the client sends it. */
-const eventSchema = z.object({
+/**
+ * One metered event as the client sends it. `metadata` must carry the fields the
+ * event's catalogue entry requires (src/models/event-catalog.ts); anything extra
+ * is kept. Issues are reported under `metadata.<field>`.
+ */
+const eventFields = {
   account_id: z.string().trim().min(1),
   event_name: z.enum(EventName),
-  /** Free-form context kept with the event for billing (connection id, provider, model, …). */
-  metadata: z
-    .record(z.string(), z.unknown())
-    .refine((m) => JSON.stringify(m).length <= METADATA_MAX_BYTES, `must be at most ${METADATA_MAX_BYTES} bytes as JSON`)
-    .optional(),
+  metadata: z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).length <= METADATA_MAX_BYTES, `must be at most ${METADATA_MAX_BYTES} bytes as JSON`),
   timestamp: pastDate.optional(),
-});
+};
+
+/** Checks `metadata` against the event's catalogue entry; issues land under `metadata.<field>`. */
+function checkCatalogMetadata(e: { event_name: EventName; metadata: Record<string, unknown> }, ctx: z.RefinementCtx): void {
+  const result = EVENT_CATALOG[e.event_name].metadata.safeParse(e.metadata);
+  if (!result.success) for (const issue of result.error.issues) ctx.addIssue({ ...issue, path: ['metadata', ...issue.path] });
+}
+
+const eventSchema = z.object(eventFields).superRefine(checkCatalogMetadata);
 const toInput = (e: z.infer<typeof eventSchema>): IngestInput => ({
   accountId: e.account_id,
   eventName: e.event_name,
@@ -68,9 +77,9 @@ export const validateIngest: Validated<{ ingest: IngestInput }> = (req, res, nex
 export const BATCH_MAX_EVENTS = 100;
 
 /** Same as a single event, except `timestamp` is required: a batch arrives after the fact, so "now" is not a sensible default. */
-const batchEventSchema = eventSchema.extend({
-  timestamp: z.custom<unknown>((value) => value !== undefined, 'is required').pipe(pastDate),
-});
+const batchEventSchema = z
+  .object({ ...eventFields, timestamp: z.custom<unknown>((value) => value !== undefined, 'is required').pipe(pastDate) })
+  .superRefine(checkCatalogMetadata);
 
 /** The envelope is checked as a whole (400); each event is then checked on its own, so one bad event does not sink the others. */
 const batchEnvelopeSchema = z.object({
