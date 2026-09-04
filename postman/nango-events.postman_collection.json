@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "nango-events",
-    "description": "Requests that exercise every path of the events API: valid ingests, each kind of invalid input, unknown accounts (404), the per account_id:event_name rate limit, the query endpoint and the Prometheus metrics. account_id values must be seeded accounts (src/models/seeded-accounts.ts); the accountId variable defaults to acc_acme. Each request asserts its expected status code, so the whole collection can be run with the Collection Runner or newman.",
+    "description": "Metering API. Ingest single events or batches (queued, 202), see them rejected when invalid, and query them raw or aggregated. Set `baseUrl` if the API is not on localhost:3000; `accountId` must be a seeded account (acc_acme, acc_globex, acc_initech, acc_umbrella, acc_hooli).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -12,78 +12,15 @@
     {
       "key": "accountId",
       "value": "acc_acme"
-    },
-    {
-      "key": "nextCursor",
-      "value": ""
     }
   ],
   "item": [
     {
-      "name": "Health",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-              "pm.test(\"status ok\", () => pm.expect(pm.response.json().status).to.eql(\"ok\"));"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/health",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "health"
-          ]
-        },
-        "description": ""
-      }
-    },
-    {
-      "name": "Metrics",
-      "event": [
-        {
-          "listen": "test",
-          "script": {
-            "type": "text/javascript",
-            "exec": [
-              "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-              "pm.test(\"prometheus text format\", () => pm.expect(pm.response.headers.get(\"Content-Type\")).to.include(\"text/plain\"));",
-              "pm.test(\"exposes the rate-limit metrics\", () => pm.expect(pm.response.text()).to.include(\"ingest_rate_limited_total\"));"
-            ]
-          }
-        }
-      ],
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/metrics",
-          "host": [
-            "{{baseUrl}}"
-          ],
-          "path": [
-            "metrics"
-          ]
-        },
-        "description": "Prometheus exposition scraped by the prometheus compose service. Rate-limit series (ingest_rate_limited_total, ingest_rate_limited_last_seen_timestamp_seconds) appear once something has been rate limited."
-      }
-    },
-    {
-      "name": "Ingest - valid",
-      "description": "",
+      "name": "Ingest",
+      "description": "POST /ingest: one event. Answers 202 once the event is on the queue; the consumer writes it to Postgres a moment later.",
       "item": [
         {
-          "name": "Valid event (signup, timestamp defaults to now)",
+          "name": "Signup (timestamp defaults to now)",
           "event": [
             {
               "listen": "test",
@@ -91,7 +28,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"returns the queued event\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"signup\"); pm.expect(d.messageId).to.be.a(\"string\"); });"
+                  "pm.test(\"queued with a server timestamp\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"signup\"); pm.expect(d.timestamp).to.be.a(\"string\"); });"
                 ]
               }
             }
@@ -113,15 +50,15 @@
                 "ingest"
               ]
             },
-            "description": "",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\"\n}"
-            }
+            },
+            "description": ""
           }
         },
         {
-          "name": "Valid event (purchase, explicit timestamp)",
+          "name": "Purchase (explicit timestamp)",
           "event": [
             {
               "listen": "test",
@@ -129,7 +66,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"uses the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
+                  "pm.test(\"keeps the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
                 ]
               }
             }
@@ -151,15 +88,15 @@
                 "ingest"
               ]
             },
-            "description": "",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"purchase\",\n  \"timestamp\": \"2026-09-01T10:15:00Z\"\n}"
-            }
+            },
+            "description": ""
           }
         },
         {
-          "name": "Valid event (login, epoch milliseconds timestamp)",
+          "name": "Login (epoch milliseconds timestamp)",
           "event": [
             {
               "listen": "test",
@@ -167,7 +104,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"uses the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
+                  "pm.test(\"epoch ms is accepted\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
                 ]
               }
             }
@@ -189,21 +126,258 @@
                 "ingest"
               ]
             },
-            "description": "",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"login\",\n  \"timestamp\": 1788257700000\n}"
-            }
+            },
+            "description": ""
           }
         }
       ]
     },
     {
-      "name": "Ingest - invalid",
-      "description": "",
+      "name": "Batch",
+      "description": "POST /ingest/batch: up to 100 events in one request, each with a required timestamp. Accepted or rejected as a whole; 10 batches per account per minute.",
       "item": [
         {
-          "name": "Unknown account",
+          "name": "Batch of 3 (one account)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"3 queued\", () => pm.expect(pm.response.json().data).to.eql({ queued: 3 }));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "batch"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"signup\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T10:05:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"purchase\",\n      \"timestamp\": \"2026-09-01T10:10:00Z\"\n    }\n  ]\n}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Batch across accounts",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"4 queued\", () => pm.expect(pm.response.json().data.queued).to.eql(4));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "batch"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_acme\",\n      \"event_name\": \"signup\",\n      \"timestamp\": \"2026-09-01T11:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T11:01:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"purchase\",\n      \"timestamp\": \"2026-09-01T11:02:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"logout\",\n      \"timestamp\": \"2026-09-01T11:03:00Z\"\n    }\n  ]\n}"
+            },
+            "description": "Counts once against each account's batch allowance."
+          }
+        },
+        {
+          "name": "Batch of 100 (maximum)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"100 queued\", () => pm.expect(pm.response.json().data.queued).to.eql(100));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "batch"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    }\n  ]\n}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Batch with invalid events (all errors listed)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"one error per problem, by event index\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"events.1.event_name\", \"events.2.timestamp\"]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "batch"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"signup\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"page_view\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"login\"\n    }\n  ]\n}"
+            },
+            "description": "Nothing from the batch is queued; every problem comes back at once."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Invalid ingestion",
+      "item": [
+        {
+          "name": "Invalid event name",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"names the field and the allowed values\", () => pm.expect(pm.response.json().error).to.include(\"event_name: Invalid option\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"page_view\"\n}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Bad data (missing account, unparseable timestamp)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"every bad field is listed\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"account_id\", \"timestamp\"]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"event_name\": \"signup\",\n  \"timestamp\": \"yesterday\"\n}"
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Unknown partner id",
           "event": [
             {
               "listen": "test",
@@ -211,7 +385,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
-                  "pm.test(\"names the account\", () => pm.expect(pm.response.json().error).to.eql(\"Account acc_unknown not found\"));"
+                  "pm.test(\"account not found\", () => pm.expect(pm.response.json().error).to.eql(\"Account acc_unknown not found\"));"
                 ]
               }
             }
@@ -233,563 +407,139 @@
                 "ingest"
               ]
             },
-            "description": "account_id is not one of the seeded accounts, so nothing is stored. Unknown accounts are rejected before the rate limit, so this never consumes quota.",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"account_id\": \"acc_unknown\",\n  \"event_name\": \"signup\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Unknown event name",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"event_name\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
             },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"page_view\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Missing event name",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"event_name\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Missing account id",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"account_id\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"event_name\": \"signup\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Blank account id",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"account_id\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"   \",\n  \"event_name\": \"signup\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Non-string account id",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"names the field\", () => pm.expect(pm.response.json().details[0].path).to.eql(\"account_id\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": 12345,\n  \"event_name\": \"signup\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Timestamp in the future",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().error).to.include(\"timestamp: must not be in the future\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\",\n  \"timestamp\": \"2999-01-01T00:00:00Z\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Unparseable timestamp",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().error).to.include(\"timestamp: must be an ISO-8601 date\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\",\n  \"timestamp\": \"yesterday\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Several invalid fields at once",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"lists every problem in details\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"account_id\", \"event_name\", \"timestamp\"]));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"timestamp\": \"nope\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Array body",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "[\n  {\n    \"account_id\": \"{{accountId}}\",\n    \"event_name\": \"signup\"\n  }\n]"
-            }
-          }
-        },
-        {
-          "name": "Malformed JSON",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"malformed json message\", () => pm.expect(pm.response.json().error).to.eql(\"Malformed JSON body\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "",
-            "body": {
-              "mode": "raw",
-              "raw": "{\"account_id\": \"{{accountId}}\", \"event_name\": "
-            }
+            "description": "Only seeded accounts are accepted. Checked before the rate limiter, so unknown ids never use quota."
           }
         }
       ]
     },
     {
-      "name": "Ingest - rate limit",
-      "description": "The limit is INGEST_RATE_LIMIT_PER_MINUTE (default 100) per account_id:event_name. Uses the seeded account acc_umbrella so it never blocks the other requests.",
+      "name": "Query",
+      "description": "GET /events. Raw events newest first, or with `window` one count per time bucket.",
       "item": [
         {
-          "name": "Rate limit (run 101 times)",
-          "event": [
+          "name": "Fetch events",
+          "item": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"rate limit headers present\", () => pm.expect(pm.response.headers.has(\"RateLimit-Limit\")).to.be.true);"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "Run this with the Collection Runner set to 101 iterations: the first 100 return 202, the 101st returns 429 with RateLimit-* headers. Uses the seeded account acc_umbrella (Umbrella Corp) so it never blocks the other requests.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"logout\"\n}"
-            }
-          }
-        },
-        {
-          "name": "Other event for the same account still accepted",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "url": {
-              "raw": "{{baseUrl}}/ingest",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "ingest"
-              ]
-            },
-            "description": "Send after the request above has hit 429: the limit is per account_id + event_name, so a different event name is still served.",
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"signup\"\n}"
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Query events",
-      "description": "",
-      "item": [
-        {
-          "name": "Events for account (newest first)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"has data and meta\", () => { const b = pm.response.json(); pm.expect(b.data).to.be.an(\"array\"); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?account={{accountId}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
+              "name": "By account",
+              "event": [
                 {
-                  "key": "account",
-                  "value": "{{accountId}}"
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"newest first, with paging meta\", () => { const b = pm.response.json(); pm.expect(b.data).to.be.an(\"array\"); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
+                    ]
+                  }
                 }
-              ]
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/events?account={{accountId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "events"
+                  ],
+                  "query": [
+                    {
+                      "key": "account",
+                      "value": "{{accountId}}"
+                    }
+                  ]
+                },
+                "description": ""
+              }
             },
-            "description": ""
-          }
-        },
-        {
-          "name": "Events for account + event name in a date range",
-          "event": [
             {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"echoes filters\", () => pm.expect(pm.response.json().filters).to.eql({ account: pm.variables.get(\"accountId\"), event: \"purchase\", from: \"2026-09-01T00:00:00.000Z\", to: \"2026-09-02T00:00:00.000Z\" }));"
-                ]
+              "name": "By account and event",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"only purchases\", () => pm.response.json().data.forEach(e => pm.expect(e.eventName).to.eql(\"purchase\")));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/events?account={{accountId}}&event=purchase",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "events"
+                  ],
+                  "query": [
+                    {
+                      "key": "account",
+                      "value": "{{accountId}}"
+                    },
+                    {
+                      "key": "event",
+                      "value": "purchase"
+                    }
+                  ]
+                },
+                "description": ""
+              }
+            },
+            {
+              "name": "By time range",
+              "event": [
+                {
+                  "listen": "test",
+                  "script": {
+                    "type": "text/javascript",
+                    "exec": [
+                      "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                      "pm.test(\"everything inside the range\", () => pm.response.json().data.forEach(e => { pm.expect(new Date(e.timestamp)).to.be.at.least(new Date(\"2026-09-01T00:00:00Z\")); pm.expect(new Date(e.timestamp)).to.be.at.most(new Date(\"2026-09-01T23:59:59Z\")); }));"
+                    ]
+                  }
+                }
+              ],
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/events?from=2026-09-01T00:00:00Z&to=2026-09-01T23:59:59Z",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "events"
+                  ],
+                  "query": [
+                    {
+                      "key": "from",
+                      "value": "2026-09-01T00:00:00Z"
+                    },
+                    {
+                      "key": "to",
+                      "value": "2026-09-01T23:59:59Z"
+                    }
+                  ]
+                },
+                "description": "from/to are inclusive; ISO-8601 or epoch milliseconds."
               }
             }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?account={{accountId}}&event=purchase&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "account",
-                  "value": "{{accountId}}"
-                },
-                {
-                  "key": "event",
-                  "value": "purchase"
-                },
-                {
-                  "key": "from",
-                  "value": "2026-09-01T00:00:00Z"
-                },
-                {
-                  "key": "to",
-                  "value": "2026-09-02T00:00:00Z"
-                }
-              ]
-            },
-            "description": ""
-          }
+          ]
         },
         {
-          "name": "Counts per hour (window=1h)",
+          "name": "Fetch window (counts per hour over a day)",
           "event": [
             {
               "listen": "test",
@@ -797,46 +547,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"windowed shape\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.buckets).to.be.an(\"array\"); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?account={{accountId}}&window=1h",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "account",
-                  "value": "{{accountId}}"
-                },
-                {
-                  "key": "window",
-                  "value": "1h"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Counts per hour over one day (24 buckets, zeros filled)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"24h at window=1h is 24 values\", () => { const b = pm.response.json(); pm.expect(b.meta.total).to.eql(24); pm.expect(b.buckets).to.have.lengthOf(24); });"
+                  "pm.test(\"24 hourly buckets, empty ones as 0\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.meta.total).to.eql(24); pm.expect(b.buckets).to.have.lengthOf(24); });"
                 ]
               }
             }
@@ -871,11 +582,11 @@
                 }
               ]
             },
-            "description": ""
+            "description": "window = bucket size (minute, hour, day, or 15m, 6h, 1w). Buckets align to the clock; a 24h range at 1h is exactly 24 values."
           }
         },
         {
-          "name": "Counts per hour, second page of buckets (limit=10, offset=20)",
+          "name": "Fetch window grouped by account and event",
           "event": [
             {
               "listen": "test",
@@ -883,7 +594,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"last 4 of 24 buckets\", () => { const b = pm.response.json(); pm.expect(b.meta).to.include({ total: 24, limit: 10, offset: 20 }); pm.expect(b.buckets).to.have.lengthOf(4); });"
+                  "pm.test(\"each row carries account and event\", () => { const b = pm.response.json(); pm.expect(b.groupBy).to.eql([\"account\", \"event\"]); b.buckets.forEach(r => pm.expect(r).to.have.keys(\"windowStart\", \"account\", \"event\", \"count\")); });"
                 ]
               }
             }
@@ -892,7 +603,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/events?window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z&limit=10&offset=20",
+              "raw": "{{baseUrl}}/events?window=1h&group_by=account,event&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -905,390 +616,8 @@
                   "value": "1h"
                 },
                 {
-                  "key": "from",
-                  "value": "2026-09-01T00:00:00Z"
-                },
-                {
-                  "key": "to",
-                  "value": "2026-09-02T00:00:00Z"
-                },
-                {
-                  "key": "limit",
-                  "value": "10"
-                },
-                {
-                  "key": "offset",
-                  "value": "20"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Paginated (limit=2, offset=1)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"meta reflects paging\", () => pm.expect(pm.response.json().meta).to.include({ limit: 2, offset: 1 }));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?limit=2&offset=1",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "2"
-                },
-                {
-                  "key": "offset",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: unknown event filter",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?event=page_view",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "event",
-                  "value": "page_view"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: from after to",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"explains why\", () => pm.expect(pm.response.json().error).to.include(\"from: must be before or equal to to\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?from=2026-09-02T00:00:00Z&to=2026-09-01T00:00:00Z",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "from",
-                  "value": "2026-09-02T00:00:00Z"
-                },
-                {
-                  "key": "to",
-                  "value": "2026-09-01T00:00:00Z"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: limit over maximum",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?limit=100000",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "100000"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: bad window",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?window=1y",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "window",
-                  "value": "1y"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: unknown account filter",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 404\", () => pm.response.to.have.status(404));",
-                  "pm.test(\"names the account\", () => pm.expect(pm.response.json().error).to.eql(\"Account acc_unknown not found\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?account=acc_unknown",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "account",
-                  "value": "acc_unknown"
-                }
-              ]
-            },
-            "description": "The account filter must name a seeded account."
-          }
-        },
-        {
-          "name": "Page 1 (limit=2, stores nextCursor)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "const meta = pm.response.json().meta; pm.collectionVariables.set(\"nextCursor\", meta.nextCursor || \"\");",
-                  "pm.test(\"meta has nextCursor (null only when the account has 2 or fewer events)\", () => pm.expect(meta).to.have.property(\"nextCursor\"));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?account={{accountId}}&limit=2",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "account",
-                  "value": "{{accountId}}"
-                },
-                {
-                  "key": "limit",
-                  "value": "2"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Page 2 (cursor from page 1)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200 (400 if page 1 had no next page: send more events first)\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"rows continue past page 1\", () => pm.expect(pm.response.json().data.length).to.be.at.most(2));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?account={{accountId}}&limit=2&cursor={{nextCursor}}",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "account",
-                  "value": "{{accountId}}"
-                },
-                {
-                  "key": "limit",
-                  "value": "2"
-                },
-                {
-                  "key": "cursor",
-                  "value": "{{nextCursor}}"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: cursor with offset",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?cursor=abc&offset=5",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "cursor",
-                  "value": "abc"
-                },
-                {
-                  "key": "offset",
-                  "value": "5"
-                }
-              ]
-            },
-            "description": ""
-          }
-        },
-        {
-          "name": "Invalid: too many buckets (window=1s over a day)",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?window=1s&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "window",
-                  "value": "1s"
+                  "key": "group_by",
+                  "value": "account,event"
                 },
                 {
                   "key": "from",
@@ -1300,7 +629,89 @@
                 }
               ]
             },
-            "description": ""
+            "description": "group_by=account, event, or account,event. Every group seen in the range gets the full set of buckets."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rate limit",
+      "description": "Used in the demo to trigger 429s and the Slack alert. Run with the Collection Runner.",
+      "item": [
+        {
+          "name": "Single ingest (run 101 times: 101st is 429)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"202 for the first 100 in a minute, then 429\", () => pm.expect([202, 429]).to.include(pm.response.code));",
+                  "pm.test(\"rate limit headers present\", () => pm.expect(pm.response.headers.has(\"RateLimit-Limit\")).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"logout\"\n}"
+            },
+            "description": "100 per minute per account + event. Uses its own account so it never blocks the other requests."
+          }
+        },
+        {
+          "name": "Batch (run 11 times: 11th is 429)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"202 for the first 10 batches in a minute, then 429\", () => pm.expect([202, 429]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest/batch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest",
+                "batch"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_initech\",\n      \"event_name\": \"logout\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    }\n  ]\n}"
+            },
+            "description": "10 batches per account per minute, separate from the single-ingest limit and with its own alert."
           }
         }
       ]

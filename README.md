@@ -88,13 +88,12 @@ Batches have their own limit: `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` (default 10) 
 | `window`  | Aggregation bucket size: `minute`, `hour`, `day`, or `30s`, `15m`, `1h`, `1d`, `1w` (max `366d`). Switches to aggregated mode |
 | `group_by`| Aggregated mode only: `account`, `event`, or `account,event`. One row per bucket per group, each row also carrying `account`/`event` |
 | `limit`   | Page size (default `EVENTS_DEFAULT_LIMIT`, max `EVENTS_MAX_LIMIT`)          |
-| `offset`  | Page offset (simple paging; cost grows with depth)                          |
-| `cursor`  | Raw listing only: `meta.nextCursor` from the previous page (keyset paging; constant cost). Not with `offset` |
+| `offset`  | Page offset                                                                 |
 
 Without `window` the response is the raw events, newest first:
 
 ```json
-{ "data": [...], "meta": { "total": 2, "limit": 100, "offset": 0, "nextCursor": null }, "filters": { "account": "acc_1" } }
+{ "data": [...], "meta": { "total": 2, "limit": 100, "offset": 0 }, "filters": { "account": "acc_1" } }
 ```
 
 With `window` the response is a count per bucket, oldest first. Buckets are aligned to the clock (a `1h`
@@ -199,13 +198,13 @@ Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timest
 
 Grafana (`:3001`) comes with three provisioned dashboards: **Event Queue** (queue and dead-letter queue depth, in-flight messages, consumers, message rates), **API HTTP** (requests/s, latency, error rate, rate-limit hits, from Prometheus) and **Events** (events over time, by name, top accounts, latest events, straight from Postgres). Source: `grafana/provisioning/dashboards/*.json`.
 
-## Demo
-
-[docs/demo-runbook.md](docs/demo-runbook.md) is the 15-minute demo script: a timed live run, a plain-language explanation of the rate limit, the metrics → alert pipeline, the queue and the query endpoint, and a file map.
-
 ## Postman
 
-Import `postman/nango-events.postman_collection.json`. It covers the health and metrics endpoints, valid ingests, each kind of invalid input, unknown accounts (`404`), the rate limit (run the "Rate limit" request 101 times with the Collection Runner), and the query endpoint. The `accountId` variable defaults to the seeded `acc_acme`; set `baseUrl` if the API is not on `http://localhost:3000`.
+Import `postman/nango-events.postman_collection.json` (variables `baseUrl`, `accountId`). Folders: **Ingest** (three
+successful single events), **Batch** (three successful batches and one that is rejected with every error listed),
+**Invalid ingestion** (bad event name, bad data, unknown partner id), **Query** (events by account / event / time range,
+a window of hourly counts, and the same grouped by account and event) and **Rate limit** (two requests to run repeatedly
+with the Collection Runner to trigger 429s and the Slack alerts). Every request asserts its expected status.
 
 ## Tests
 

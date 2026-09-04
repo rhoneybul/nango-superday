@@ -1,4 +1,3 @@
-import type { EventCursor } from '../lib/cursor';
 import { Prisma } from '../generated/prisma/client';
 import { prisma } from '../lib/prisma';
 import type { EventName } from './event-name';
@@ -35,22 +34,13 @@ export async function createEvent(accountId: string, eventName: EventName, times
   return toRecord(row);
 }
 
-export interface Page {
-  offset: number;
-  /** Keyset: only rows strictly after this (timestamp, id) in listing order. */
-  after?: EventCursor;
-}
-
-/** Newest first. `after` uses the (…, timestamp) indexes directly, so deep pages cost the same as the first. */
-export async function findEvents(where: EventWhere, limit: number, page: Page): Promise<EventRecord[]> {
-  const keyset: Prisma.EventWhereInput = page.after
-    ? { OR: [{ timestamp: { lt: page.after.timestamp } }, { timestamp: page.after.timestamp, id: { lt: page.after.id } }] }
-    : {};
+/** Newest first, paged with limit/offset. */
+export async function findEvents(where: EventWhere, limit: number, offset: number): Promise<EventRecord[]> {
   const rows = await prisma.event.findMany({
-    where: { ...where, ...keyset },
+    where,
     orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
     take: limit,
-    skip: page.offset,
+    skip: offset,
   });
   return rows.map(toRecord);
 }
