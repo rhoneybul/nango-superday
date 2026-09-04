@@ -9,7 +9,7 @@ docker compose up --build
 ```
 
 Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`.
-For Slack alerts, put a Slack incoming-webhook URL for `#superday-rob` in `.env` as `SLACK_WEBHOOK_URL` before starting (see [Alerting](#alerting)).
+For Slack alerts, put a Slack bot token in `.env` as `SLACK_BOT_TOKEN` before starting. The bot needs the `chat:write` scope and must be invited to `#superday-rob` (see [Alerting](#alerting)).
 
 ## Run locally
 
@@ -70,7 +70,7 @@ Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path"
 Event driven, no database involved: the rate limiter records each 429 it sends as a metric, Prometheus scrapes it, and [Grafana alerting](https://grafana.com/docs/grafana/latest/alerting/) does the rest. Everything on the Grafana side is provisioned from `grafana/provisioning/alerting/` and also editable in the UI under Alerting:
 
 - `rules.yml` — the alert rules. `RateLimitExceeded` evaluates `time() - ingest_rate_limited_last_seen_timestamp_seconds < 60` every 10s: an `account_id` + `event_name` pair is alerting while its latest rejection is under a minute old, and resolves after a minute without one. One alert instance per pair.
-- `contact-points.yml` — where alerts go. Slack `#superday-rob` (via `SLACK_WEBHOOK_URL`) is the only one; add a `webhook`, `pagerduty`, `email`, … receiver to the same contact point to fan every alert out to another consumer.
+- `contact-points.yml` — where alerts go. Slack `#superday-rob` (bot token from `SLACK_BOT_TOKEN`, channel set by `recipient`) is the only one; add a `webhook`, `pagerduty`, `email`, … receiver to the same contact point to fan every alert out to another consumer.
 - `notification-policies.yml` — grouping (one notification per pair) and routing. Add a route with matchers to send only some alerts to another contact point.
 
 Grafana handles state, deduplication and delivery. On firing, Slack gets:

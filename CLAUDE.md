@@ -1,6 +1,16 @@
 # nango-events
 
-Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/adapter-pg`) + Postgres 16 + Redis 7 (rate-limit counters) + Prometheus/Grafana (metrics, alerting). No auth.
+Event ingestion API. Express 4 + TypeScript + Prisma 7 (engine-free, `@prisma/adapter-pg`) + Postgres 16. No auth.
+
+## Development
+- Implement everything with a core focus on simplicity and readability 
+- Please make sure that we have components well structured and clearly laid out
+- Use a clear controller/service/model pattern where controllers handle requests, service handle application logic and models handle thedata access patterns
+- Ensure that key operations and modules have their own files
+- Implement with a key focus on error handling and clear error message publishing
+- Make sure we implement with operability in mind, so hence make sure this has appropriate and clear json logging etc
+- Make sure that we have tests implemented however don't need to test every single edge case, focus on testing key functionality and common error paths
+
 
 ## Commands
 
@@ -9,81 +19,48 @@ Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run build` — `prisma generate && tsc` → `dist/`
 - `npx prisma migrate dev --name <name>` — new migration; `npx prisma migrate deploy` — apply
-- `docker compose up --build` — Postgres :5432, Redis :6379, Prometheus :9090 (scrapes the API's /metrics), Grafana :3001 (admin/admin; Postgres + Prometheus datasources, alert rules, contact points and notification policies pre-provisioned from `grafana/provisioning`), API :3000; migrations applied on start. Host ports are overridable via `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`. Set `SLACK_WEBHOOK_URL` in `.env` for Slack alerts
-- `npm run load` — k6 load test through compose (`k6` service, profile `load`), config `load/<LOAD_CONFIG>` (default `example.json`), summary JSON in `load/results/`. `npm run load:local` uses a local `k6` binary against `localhost:3000`
+- `docker compose up --build` — Postgres on :5432 + API on :3000, migrations applied on start
 
 `npm install` runs `prisma generate` (postinstall). Generated client lives in `src/generated/prisma` (gitignored) — never edit it, never import from `@prisma/client` directly; import `../generated/prisma/client`.
 
 ## Layout
 
 ```
-src/config/      plain object read from env (no schema library). ONLY place that reads process.env. Import `config` from here.
-src/routes.ts    URL → [validation middleware →] controller wiring only
-src/middleware/  request-id (AsyncLocalStorage, `currentRequestId()`), request-logger (also records the HTTP metrics), rate-limit (express-rate-limit + Redis store; its `handler` records each 429 in the rate-limit metrics), validation (zod schemas for every input; typed result on `res.locals`)
-src/controllers/ HTTP concerns only: read `res.locals`, call the service, set status + response shape. No try/catch, no validation.
-src/services/    business logic on already-validated input, including building the Prisma `where` (`EventWhere`).
-src/models/      Prisma data access for `events`: plain exported functions that receive a ready `where`. Raw SQL only for `countEventsByWindow`. `event-name.ts` holds the `EventName` enum.
-src/lib/         prisma client (pg adapter), ValidationError + errorHandler, pino `log`, metrics (prom-client `registry`, the rate-limit counter/gauge, GET /metrics handler)
-src/app.ts       exports the configured Express `app`
+src/config/      typed config from env via Zod. ONLY place that reads process.env. Import `config` from here.
+src/routes/      URL → controller wiring only
+src/controllers/ HTTP concerns: status codes, response shape, `next(err)`. No validation logic.
+src/services/    all input validation + business logic. Throws ValidationError (400) from src/lib/errors.
+src/models/      Prisma data access for `events`. Receives already-validated input. Raw SQL only for `countByWindow`.
+src/lib/         prisma client (pg adapter), HttpError/ValidationError + errorHandler
+src/app.ts       createApp(deps) — deps injectable for tests
 src/server.ts    listen + graceful shutdown
 prisma/          schema.prisma + migrations (initial migration is hand-written; keep it in sync with schema)
-prometheus/      prometheus.yml (scrapes api:3000/metrics every 10s)
-grafana/         provisioning/datasources (Postgres; Prometheus uid `prometheus`), provisioning/alerting (rules.yml, contact-points.yml, notification-policies.yml)
-load/            k6 load generator. `publish.js` = one constant-arrival-rate scenario per `{account_id, event_name, rps}` in the JSON config; `README.md` documents the config + report. No app code here, plain k6.
-test/            vitest + supertest against the real `app`. Each test file `vi.mock`s the model module; helpers.ts resets the stubs to defaults.
+test/            vitest + supertest. helpers.ts builds the real app wired to a vi.fn() model stub.
 ```
 
-No dependency injection: modules import each other directly (`routes` → `middleware/validation` → `controllers` → `services` → `models`). Tests swap the model with `vi.mock('../src/models/event.model')`.
-
-Request flow: `requestId` → `requestLogger` → `express.json` → route (`ingestRateLimit` on POST /ingest, then `validateX` middleware throws `ValidationError` → 400, then controller) → `errorHandler`. Express 5 forwards thrown errors and rejected promises to `errorHandler`, so nothing else catches errors.
+Dependency injection pattern: `createEventService(model)` → `createEventController(service)` → `createApp({ eventController })`. Add new resources the same way.
 
 ## Data model
 
 `events`: `id BIGSERIAL`, `account_id TEXT`, `event_name TEXT`, `timestamp TIMESTAMPTZ DEFAULT now()`, `created_at TIMESTAMPTZ`.
-`event_name` is validated against the `EventName` enum in `src/models/event-name.ts` (`signup`, `login`, `logout`, `purchase`) on ingest and on the `event` filter; the column itself stays text, so adding a value is a code change only, no migration.
 Indexes: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.
 BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 ## API
 
-- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`; a timestamp in the future → 400. Rate limited per `account_id:event_name` to `INGEST_RATE_LIMIT_PER_MINUTE` (100) → `429 { error: "Too many requests" }` with `RateLimit-*` headers; each rejection is recorded in the rate-limit metrics (see Alerting). Counters in Redis when `REDIS_URL` is set, otherwise in-process memory. Unknown `event_name` → 400 listing the allowed values.
+- `POST /ingest` body `{ account_id, event_name, timestamp? }` → 201 `{ data: event }`. Missing timestamp → DB `now()`.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
   - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`.
   - With `window` (`<n><s|m|h|d|w>`, e.g. `15m`, `1h`, `1d`): aggregated mode, `{ window, windowSeconds, buckets: [{ windowStart, count }], filters }`. Buckets are epoch-aligned via Postgres `date_bin`; empty buckets omitted.
   - Repeated query params (`?account=a&account=b`) → 400. Empty string params are treated as absent.
-- Errors: `400 { error, details: [{ path, message }] }` for validation (`error` is the joined `path: message` list, e.g. `limit: must be between 1 and 1000`), `400 { error: "Malformed JSON body" }`, `500 { error: "Internal server error" }` otherwise (no leak; the error is logged).
+- Errors: `400 { error, details? }` for validation, `500 { error: "Internal server error" }` otherwise (no leak).
 - `GET /health` → `{ status: "ok" }`.
-- `GET /metrics` → Prometheus text format from `registry` in `src/lib/metrics.ts`: `http_requests_total{method,route,status}` + `http_request_duration_seconds{method,route,status}` histogram (recorded in `requestLogger`; `route` is the matched Express route or `unmatched`), `ingest_rate_limited_total{account_id,event_name}`, `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}`, Node default metrics.
-- Every response carries `X-Request-Id` (echoes the incoming header, else a UUID). The id is in every log line for that request.
-
-## Alerting
-
-Event driven and database-free: the limiter's `handler` records every 429 in the metrics (`src/lib/metrics.ts`), Prometheus scrapes `/metrics`, Grafana alert rules query Prometheus, and Grafana's Alertmanager owns state (firing → resolved), dedupe and delivery. The Grafana side is file-provisioned in `grafana/provisioning/alerting/` and also editable in the UI:
-
-- `rules.yml`: one rule per thing to alert on = Prometheus instant query (each series is an alert instance, its labels become alert labels) + threshold expression + `summary` (firing text) and `resolved` (resolved text) annotations, each one plain actionable line. `RateLimitExceeded`: `time() - max by (account_id, event_name) (ingest_rate_limited_last_seen_timestamp_seconds) < 60`, every 10s, `for: 0s`, `noDataState: OK`. The rule uses the last-seen gauge, not `increase(ingest_rate_limited_total[1m])`, because Prometheus cannot see the first jump of a brand-new counter series: a single burst of 429s between two scrapes would never fire. Grafana does not expand env vars inside rule queries or annotations.
-- `contact-points.yml`: `slack` contact point → `#superday-rob` via `$SLACK_WEBHOOK_URL` (compose passes it from `.env`, placeholder if unset). Templates print `.CommonAnnotations.summary` when firing and `.CommonAnnotations.resolved` when resolved. Fan-out = more receivers on the same contact point (webhook, pagerduty, email, …).
-- `notification-policies.yml`: default receiver `slack`, `group_by` alertname + account_id + event_name, `group_wait 0s`, `group_interval 30s`, `repeat_interval 1h`. Selective delivery = a `routes` entry with matchers.
-
-Grafana's built-in Alertmanager does not accept externally pushed alerts (`POST /api/alertmanager/grafana/api/v2/alerts` only proxies to external Alertmanager datasources), which is why the app publishes metrics rather than alerts. `account_id` is a metric label, so cardinality grows with the number of rate-limited accounts; fine at this scale, revisit if it becomes thousands.
 
 ## Conventions
 
-- Validation is zod (`src/middleware/validation.ts`). Field messages are zod's defaults, prefixed with the field path; only refinements (window format, from/to order, limit range) carry custom wording. Tests assert messages by regex, so changing a schema means updating `test/`.
+- Validation messages are asserted by regex in tests — changing wording means updating `test/`.
 - Test env (`vitest.config.ts`) sets `EVENTS_DEFAULT_LIMIT=50`, `EVENTS_MAX_LIMIT=500`; tests depend on those values.
-- To add a setting, add one line to the `config` object in `src/config/index.ts` (use the `integer()` helper for numbers), and add it to `.env.example` and `docker-compose.yml`.
-- Logging is pino: `import { log } from '../lib/logger'`; `log.info({ fields }, 'message')` (object first, pino style). `requestId` is added to every line via a mixin. Errors go under the `err` key. `LOG_LEVEL` is `debug|info|warn|error|silent` (tests use `silent`). Never `console.log`.
-- To validate a new endpoint's input, add a zod schema + `validateX` middleware in `src/middleware/validation.ts` that sets `res.locals.x`, and type the controller as `Validated<{ x: XInput }>`.
+- Config is frozen; add new settings to the Zod schema + `Config` type in `src/config/index.ts`, and to `.env.example` and `docker-compose.yml`.
 - Prisma engines can't be downloaded in some sandboxes; `PRISMA_SCHEMA_ENGINE_BINARY=/usr/bin/true npx prisma generate` still works for `generate` (WASM-based). `migrate` does need the real engine.
 
-## Status
-
-Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package. Verified end-to-end against a real Postgres 16.
-Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose.
-Phase 3 complete: k6-based event publisher (`load/`), no bespoke CLI. Docker image now copies `prisma.config.ts` (needed by `prisma migrate deploy` at container start) and `.dockerignore` also excludes `src/generated`, `load/results`, `.git`.
-Postman collection for manual testing: `postman/nango-events.postman_collection.json` (variables `baseUrl`, `accountId`).
-Phase 4 complete: rate-limit metrics + GET /metrics, Prometheus in compose, Grafana-provisioned alerting (RateLimitExceeded rule on Prometheus, Slack contact point, notification policy). 64 tests. Firing → resolved verified against a real Prometheus 3 + Grafana 13 with a webhook stand-in for Slack.
-
-## Dashboards
-
-Provisioned from `grafana/provisioning/dashboards/*.json` (loaded by `dashboards.yml` in the same directory; editable in the UI but not written back, so change the JSON). `http.json` ("API HTTP", uid `nango-http`) is Prometheus-backed: requests/s by route and by status, p95 latency, error rate, totals, rate-limit hits. `events.json` ("Events", uid `nango-events`) is Postgres-backed SQL over the `events` table: per-minute counts by name, share by name, totals, top accounts, latest events. Datasource uids: `prometheus`, `postgres`.

@@ -11,9 +11,11 @@ contactPoints:
       - uid: slack-superday-rob
         type: slack
         settings:
-          # Slack incoming webhook (bound to #superday-rob when created); from the SLACK_WEBHOOK_URL env var.
-          # For a bot token instead: token: $SLACK_BOT_TOKEN, recipient: '#superday-rob'.
-          url: $SLACK_WEBHOOK_URL
+          # Slack bot token (xoxb-…, needs the chat:write scope and the bot invited to the channel);
+          # from the SLACK_BOT_TOKEN env var. To use an incoming webhook instead, replace these two
+          # lines with: url: $SLACK_WEBHOOK_URL
+          token: $SLACK_BOT_TOKEN
+          recipient: '#superday-rob'
           title: '{{ if eq .Status "firing" }}:rotating_light: {{ else }}:white_check_mark: Resolved: {{ end }}{{ .CommonLabels.alertname }}'
           text: '{{ if eq .Status "firing" }}{{ .CommonAnnotations.summary }}{{ else }}{{ .CommonAnnotations.resolved }}{{ end }}'
       # Generic webhook consumer (receives Grafana's alert JSON, firing and resolved):
