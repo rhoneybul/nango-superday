@@ -1,3 +1,4 @@
+import type { RequestHandler } from 'express';
 import type { Validated } from '../middleware/validation';
 import { ingestBatch, ingestEvent, listEvents, type IngestInput, type ListEventsInput } from '../services/event.service';
 
@@ -13,9 +14,9 @@ export const ingest: Validated<{ ingest: IngestInput }> = async (_req, res) => {
   res.status(202).json({ data: queued });
 };
 
-/** 202: every event in the batch is queued. */
-export const ingestBatchEvents: Validated<{ batch: IngestInput[] }> = async (_req, res) => {
-  res.status(202).json({ data: await ingestBatch(res.locals.batch) });
+/** 202: every event in the batch is queued. The service validates the raw body itself (see `ingestBatch`). */
+export const ingestBatchEvents: RequestHandler = async (req, res) => {
+  res.status(202).json({ data: await ingestBatch(req.body) });
 };
 
 export const list: Validated<{ listEvents: ListEventsInput }> = async (_req, res) => {

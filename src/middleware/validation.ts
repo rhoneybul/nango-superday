@@ -1,7 +1,6 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
-import { decodeCursor } from '../lib/cursor';
 import { ValidationError } from '../lib/errors';
 import { EventName } from '../models/event-name';
 import type { WindowGroup } from '../models/event.model';
@@ -16,7 +15,8 @@ import type { IngestInput, ListEventsInput } from '../services/event.service';
 /** Express handler whose `res.locals` carries the validated input `T`. */
 export type Validated<T extends Record<string, unknown>> = RequestHandler<Record<string, string>, unknown, unknown, unknown, T>;
 
-function parse<T>(schema: z.ZodType<T>, input: unknown): T {
+/** Parses `input` with `schema`, or throws the ValidationError (→ 400) listing every issue. Also used by the service for batch ingest. */
+export function parse<T>(schema: z.ZodType<T>, input: unknown): T {
   const result = schema.safeParse(input);
   if (result.success) return result.data;
   const details = result.error.issues.map((issue) => ({ path: issue.path.join('.'), message: issue.message }));
@@ -29,7 +29,7 @@ function parse<T>(schema: z.ZodType<T>, input: unknown): T {
 // ---------------------------------------------------------------------------
 
 /** ISO-8601 string or epoch milliseconds → Date. */
-const date = z.preprocess(
+export const date = z.preprocess(
   (value) => (typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : value),
   z.coerce.date({ error: 'must be an ISO-8601 date or epoch milliseconds' }),
 );
@@ -62,37 +62,6 @@ const ingestSchema: z.ZodType<IngestInput> = z
 
 export const validateIngest: Validated<{ ingest: IngestInput }> = (req, res, next) => {
   res.locals.ingest = parse(ingestSchema, req.body);
-  next();
-};
-
-// ---------------------------------------------------------------------------
-// POST /ingest/batch
-// ---------------------------------------------------------------------------
-
-export const BATCH_MAX_EVENTS = 100;
-
-/** Same as a single ingest, except `timestamp` is required: a batch arrives after the fact, so "now" is not a sensible default. */
-const batchEventSchema = z.object({
-  account_id: z.string().trim().min(1),
-  event_name: z.enum(EventName),
-  timestamp: z
-    .custom<unknown>((value) => value !== undefined, 'is required')
-    .pipe(date)
-    .refine((d) => d <= new Date(), 'must not be in the future'),
-});
-
-/** Every event is checked; any failure rejects the whole batch with one `details` entry per problem (path `events.<index>.<field>`). */
-const ingestBatchSchema: z.ZodType<IngestInput[]> = z
-  .object({
-    events: z
-      .array(batchEventSchema)
-      .min(1, 'must contain at least one event')
-      .max(BATCH_MAX_EVENTS, `must contain at most ${BATCH_MAX_EVENTS} events`),
-  })
-  .transform((body) => body.events.map((e) => ({ accountId: e.account_id, eventName: e.event_name, timestamp: e.timestamp })));
-
-export const validateIngestBatch: Validated<{ batch: IngestInput[] }> = (req, res, next) => {
-  res.locals.batch = parse(ingestBatchSchema, req.body);
   next();
 };
 
@@ -132,18 +101,8 @@ const listEventsSchema: z.ZodType<ListEventsInput> = z
         .optional(),
       limit,
       offset,
-      cursor: z
-        .string()
-        .transform((raw, ctx) => {
-          const cursor = decodeCursor(raw);
-          if (!cursor) ctx.addIssue({ code: 'custom', message: 'must be a nextCursor value from a previous response' });
-          return cursor ?? undefined;
-        })
-        .optional(),
     }),
   )
-  .refine((q) => !(q.cursor && q.offset), { path: ['offset'], message: 'cannot be combined with cursor' })
-  .refine((q) => !(q.cursor && q.window), { path: ['cursor'], message: 'cannot be combined with window; page buckets with offset' })
   .refine((q) => !(q.group_by && !q.window), { path: ['group_by'], message: 'requires window' })
   .refine((q) => !q.from || !q.to || q.from <= q.to, { path: ['from'], message: 'must be before or equal to to' })
   .refine((q) => !q.window || !q.from || !q.to || bucketCount(q.from, q.to, q.window.seconds) <= config.eventsMaxBuckets, {

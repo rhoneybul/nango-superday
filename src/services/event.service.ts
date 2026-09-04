@@ -1,16 +1,21 @@
+import { z } from 'zod';
 import { config } from '../config';
-import { encodeCursor, type EventCursor } from '../lib/cursor';
-import { ValidationError } from '../lib/errors';
-import type { EventName } from '../models/event-name';
+import { RateLimitError, ValidationError } from '../lib/errors';
+import { ingestBatchRateLimited, ingestBatchRateLimitedLastSeen } from '../lib/metrics';
+import { rateLimitStore } from '../lib/rate-limit-store';
+import { date, parse } from '../middleware/validation';
+import { EventName } from '../models/event-name';
 import * as events from '../models/event.model';
 import type { EventRecord, EventWhere, WindowBucket, WindowGroup } from '../models/event.model';
 import type { EventMessage } from '../queue/message';
 import { publishEvent } from '../queue/publisher';
+import { getAccount } from './account.service';
 
 /**
- * Business logic for events. Input has already been validated by the
- * middleware in src/middleware/validation.ts, so these functions only
- * translate typed input into model calls.
+ * Business logic for events. Single ingest and queries receive input already
+ * validated by the middleware in src/middleware/validation.ts. Batch ingest is
+ * the exception: `ingestBatch` takes the raw body and does its own validation,
+ * account check and rate limit, so that everything about a batch is in one place.
  */
 
 // ---------------------------------------------------------------------------
@@ -31,8 +36,62 @@ export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
   return message;
 }
 
-/** Publishes every event of an already-validated batch. Returns how many were queued. */
-export async function ingestBatch(inputs: IngestInput[]): Promise<{ queued: number }> {
+// ---------------------------------------------------------------------------
+// POST /ingest/batch
+// ---------------------------------------------------------------------------
+
+export const BATCH_MAX_EVENTS = 100;
+
+/** Same rules as a single ingest, except `timestamp` is required: a batch arrives after the fact, so "now" is not a sensible default. */
+const batchEventSchema = z.object({
+  account_id: z.string().trim().min(1),
+  event_name: z.enum(EventName),
+  timestamp: z
+    .custom<unknown>((value) => value !== undefined, 'is required')
+    .pipe(date)
+    .refine((d) => d <= new Date(), 'must not be in the future'),
+});
+
+const batchSchema = z
+  .object({
+    events: z
+      .array(batchEventSchema)
+      .min(1, 'must contain at least one event')
+      .max(BATCH_MAX_EVENTS, `must contain at most ${BATCH_MAX_EVENTS} events`),
+  })
+  .transform((body) => body.events.map((e): IngestInput => ({ accountId: e.account_id, eventName: e.event_name, timestamp: e.timestamp })));
+
+/**
+ * Batch ingest, all-or-nothing:
+ *   1. every event is validated (one `details` entry per problem, path `events.<index>.<field>`);
+ *   2. every distinct account must exist (unknown ones are listed the same way);
+ *   3. each account may send INGEST_BATCH_RATE_LIMIT_PER_MINUTE batches a minute, counted in the
+ *      shared rate-limit store under `batch:<account>`; any account over → 429 listing them;
+ *   4. only then is every event published. Returns how many were queued.
+ */
+export async function ingestBatch(body: unknown): Promise<{ queued: number }> {
+  const inputs = parse(batchSchema, body);
+
+  const accountIds = [...new Set(inputs.map((e) => e.accountId))];
+  const found = await Promise.all(accountIds.map((id) => getAccount(id)));
+  const unknown = new Set(accountIds.filter((_, i) => found[i] === null));
+  if (unknown.size) {
+    const details = inputs.flatMap((e, i) => (unknown.has(e.accountId) ? [{ path: `events.${i}.account_id`, message: `Account ${e.accountId} not found` }] : []));
+    throw new ValidationError(details.map((d) => `${d.path}: ${d.message}`).join('; '), details);
+  }
+
+  const limit = config.ingestBatchRateLimitPerMinute;
+  const over: { account: string; limit: number }[] = [];
+  for (const account of accountIds) {
+    const { totalHits } = await rateLimitStore.increment(`batch:${account}`);
+    if (totalHits > limit) {
+      ingestBatchRateLimited.inc({ account_id: account });
+      ingestBatchRateLimitedLastSeen.set({ account_id: account }, Date.now() / 1000);
+      over.push({ account, limit });
+    }
+  }
+  if (over.length) throw new RateLimitError(over);
+
   await Promise.all(inputs.map((input) => ingestEvent(input)));
   return { queued: inputs.length };
 }
@@ -52,8 +111,6 @@ export interface ListEventsInput {
   group_by?: WindowGroup[];
   limit: number;
   offset: number;
-  /** Keyset cursor from a previous page's `meta.nextCursor` (raw listing only); exclusive with a non-zero offset. */
-  cursor?: EventCursor;
 }
 
 /** The filters that were applied, echoed back in every response. */
@@ -66,8 +123,7 @@ export interface AppliedFilters {
 
 export interface EventListing {
   data: EventRecord[];
-  /** `nextCursor` is null on the last page. Pass it as `cursor` to fetch the next one. */
-  meta: { total: number; limit: number; offset: number; nextCursor: string | null };
+  meta: { total: number; limit: number; offset: number };
   filters: AppliedFilters;
 }
 
@@ -84,7 +140,7 @@ export interface EventWindowCounts {
 }
 
 export async function listEvents(input: ListEventsInput): Promise<EventListing | EventWindowCounts> {
-  const { account, event, from, to, window, group_by: groupBy = [], limit, offset, cursor } = input;
+  const { account, event, from, to, window, group_by: groupBy = [], limit, offset } = input;
 
   const where: EventWhere = {};
   if (account) where.accountId = account;
@@ -110,12 +166,8 @@ export async function listEvents(input: ListEventsInput): Promise<EventListing |
     };
   }
 
-  // Fetch one row past the page so we know whether a next page exists without a second query.
-  const [rows, total] = await Promise.all([events.findEvents(where, limit + 1, { offset, after: cursor }), events.countEvents(where)]);
-  const data = rows.slice(0, limit);
-  const last = data[data.length - 1];
-  const nextCursor = rows.length > limit && last ? encodeCursor({ timestamp: last.timestamp, id: BigInt(last.id) }) : null;
-  return { data, meta: { total, limit, offset, nextCursor }, filters };
+  const [data, total] = await Promise.all([events.findEvents(where, limit, offset), events.countEvents(where)]);
+  return { data, meta: { total, limit, offset }, filters };
 }
 
 /**

@@ -4,3 +4,4 @@ dist
 src/generated
 load/results/*
 !load/results/.gitkeep
+docs/demo-runbook.md
