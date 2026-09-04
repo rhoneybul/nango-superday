@@ -139,43 +139,35 @@ describe('GET /events', () => {
   });
 
   describe('window (bucketed counts)', () => {
-    it('returns bucketed counts and skips the raw listing', async () => {
+    const day = { from: '2026-09-01T00:00:00Z', to: '2026-09-02T00:00:00Z' };
+
+    it('returns one count per bucket over from/to, empty buckets as 0, and skips the raw listing', async () => {
       events.countEventsByWindow.mockResolvedValueOnce([
         { windowStart: new Date('2026-09-01T10:00:00Z'), count: 3 },
         { windowStart: new Date('2026-09-01T11:00:00Z'), count: 1 },
       ]);
 
-      const res = await request(app).get('/events').query({ account: 'acc_1', event: 'signup', window: '1h' });
+      const res = await request(app).get('/events').query({ account: 'acc_1', event: 'signup', window: '1h', ...day });
 
       expect(res.status).toBe(200);
-      expect(res.body).toEqual({
-        window: '1h',
-        windowSeconds: 3600,
-        groupBy: [],
-        buckets: [
-          { windowStart: '2026-09-01T10:00:00.000Z', count: 3 },
-          { windowStart: '2026-09-01T11:00:00.000Z', count: 1 },
-        ],
-        meta: { total: 2, limit: 50, offset: 0 },
-        filters: { account: 'acc_1', event: 'signup' },
-      });
-      expect(events.countEventsByWindow).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'signup' }, 3600, 10001, []);
+      expect(res.body.window).toBe('1h');
+      expect(res.body.windowSeconds).toBe(3600);
+      expect(res.body.meta).toEqual({ total: 24, limit: 50, offset: 0 });
+      expect(res.body.buckets).toHaveLength(24);
+      expect(res.body.buckets[0]).toEqual({ windowStart: '2026-09-01T00:00:00.000Z', count: 0 });
+      expect(res.body.buckets[10]).toEqual({ windowStart: '2026-09-01T10:00:00.000Z', count: 3 });
+      expect(res.body.buckets[11]).toEqual({ windowStart: '2026-09-01T11:00:00.000Z', count: 1 });
+      expect(res.body.buckets[23]).toEqual({ windowStart: '2026-09-01T23:00:00.000Z', count: 0 });
+      expect(res.body.filters).toEqual({ account: 'acc_1', event: 'signup', from: '2026-09-01T00:00:00.000Z', to: '2026-09-02T00:00:00.000Z' });
+      expect(events.countEventsByWindow).toHaveBeenCalledWith(
+        { accountId: 'acc_1', eventName: 'signup', timestamp: { gte: new Date(day.from), lte: new Date(day.to) } },
+        3600,
+      );
       expect(events.findEvents).not.toHaveBeenCalled();
       expect(events.countEvents).not.toHaveBeenCalled();
     });
 
-    it('fills every bucket in a from/to range, so 24h at window=1h is 24 values', async () => {
-      events.countEventsByWindow.mockResolvedValueOnce([{ windowStart: new Date('2026-09-01T05:00:00Z'), count: 7 }]);
-      const res = await request(app).get('/events').query({ window: '1h', from: '2026-09-01T00:00:00Z', to: '2026-09-02T00:00:00Z' });
-      expect(res.status).toBe(200);
-      expect(res.body.buckets).toHaveLength(24);
-      expect(res.body.meta).toEqual({ total: 24, limit: 50, offset: 0 });
-      expect(res.body.buckets[0]).toEqual({ windowStart: '2026-09-01T00:00:00.000Z', count: 0 });
-      expect(res.body.buckets[5]).toEqual({ windowStart: '2026-09-01T05:00:00.000Z', count: 7 });
-      expect(res.body.buckets[23]).toEqual({ windowStart: '2026-09-01T23:00:00.000Z', count: 0 });
-    });
-
-    it('aligns filled buckets to the clock, not to from', async () => {
+    it('aligns buckets to the clock, not to from', async () => {
       const res = await request(app).get('/events').query({ window: '1h', from: '2026-09-01T00:30:00Z', to: '2026-09-01T03:00:00Z' });
       expect(res.body.buckets.map((b: { windowStart: string }) => b.windowStart)).toEqual([
         '2026-09-01T00:00:00.000Z',
@@ -185,7 +177,7 @@ describe('GET /events', () => {
     });
 
     it('pages buckets with limit and offset', async () => {
-      const res = await request(app).get('/events').query({ window: '1h', from: '2026-09-01T00:00:00Z', to: '2026-09-02T00:00:00Z', limit: '10', offset: '20' });
+      const res = await request(app).get('/events').query({ window: '1h', ...day, limit: '10', offset: '20' });
       expect(res.status).toBe(200);
       expect(res.body.meta).toEqual({ total: 24, limit: 10, offset: 20 });
       expect(res.body.buckets.map((b: { windowStart: string }) => b.windowStart)).toEqual([
@@ -208,90 +200,31 @@ describe('GET /events', () => {
       ['hour', 3600],
       ['day', 86400],
     ])('parses window %s as %i seconds', async (window, seconds) => {
-      const res = await request(app).get('/events').query({ window });
+      const res = await request(app).get('/events').query({ window, from: '2026-08-01T00:00:00Z', to: '2026-08-01T00:00:30Z' });
       expect(res.status).toBe(200);
       expect(res.body.windowSeconds).toBe(seconds);
-      expect(events.countEventsByWindow).toHaveBeenCalledWith(expect.anything(), seconds, 10001, []);
+      expect(events.countEventsByWindow).toHaveBeenCalledWith(expect.anything(), seconds);
     });
 
-    it('passes from/to through to the windowed query', async () => {
-      await request(app).get('/events').query({ window: '1d', from: '2026-09-01T00:00:00Z', to: '2026-09-03T00:00:00Z' });
-      expect(events.countEventsByWindow).toHaveBeenCalledWith(
-        { timestamp: { gte: new Date('2026-09-01T00:00:00Z'), lte: new Date('2026-09-03T00:00:00Z') } },
-        86400,
-        10001,
-        [],
-      );
-    });
-
-    it.each(['1', 'h', '1hour', '1.5h', '-1h', '0h', 'abc', '1y', '53w'])('rejects invalid window %s', async (window) => {
-      const res = await request(app).get('/events').query({ window });
+    it.each(['1', 'h', '1hour', '1.5h', '-1h', '0h', 'abc', '1y'])('rejects invalid window %s', async (window) => {
+      const res = await request(app).get('/events').query({ window, ...day });
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/window/);
       expect(events.countEventsByWindow).not.toHaveBeenCalled();
     });
 
-    it('rejects a from/to range that would produce too many buckets (EVENTS_MAX_BUCKETS=10000 in tests)', async () => {
-      const res = await request(app).get('/events').query({ window: '1s', from: '2026-01-01T00:00:00Z', to: '2026-01-02T00:00:00Z' });
+    it('requires from and to with a window', async () => {
+      const res = await request(app).get('/events').query({ window: '1h', from: day.from });
       expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/window: would produce more than 10000 buckets/);
+      expect(res.body.error).toMatch(/window: requires from and to/);
       expect(events.countEventsByWindow).not.toHaveBeenCalled();
     });
 
-    it('rejects an open-ended query when the model returns more than the cap', async () => {
-      events.countEventsByWindow.mockResolvedValueOnce(Array.from({ length: 10001 }, (_, i) => ({ windowStart: new Date(i * 1000), count: 1 })));
-      const res = await request(app).get('/events').query({ window: '1s' });
+    it('rejects a range that would produce too many buckets (EVENTS_MAX_BUCKETS=10000 in tests)', async () => {
+      const res = await request(app).get('/events').query({ window: '1s', ...day });
       expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(/more than 10000 buckets/);
-    });
-
-    it('groups buckets by account and event when asked', async () => {
-      events.countEventsByWindow.mockResolvedValueOnce([
-        { windowStart: new Date('2026-09-01T10:00:00Z'), account: 'acc_1', event: 'login', count: 3 },
-        { windowStart: new Date('2026-09-01T10:00:00Z'), account: 'acc_2', event: 'signup', count: 1 },
-      ]);
-      const res = await request(app).get('/events').query({ window: '1h', group_by: 'account,event' });
-      expect(res.status).toBe(200);
-      expect(res.body.groupBy).toEqual(['account', 'event']);
-      expect(res.body.buckets).toEqual([
-        { windowStart: '2026-09-01T10:00:00.000Z', account: 'acc_1', event: 'login', count: 3 },
-        { windowStart: '2026-09-01T10:00:00.000Z', account: 'acc_2', event: 'signup', count: 1 },
-      ]);
-      expect(events.countEventsByWindow).toHaveBeenCalledWith({}, 3600, 10001, ['account', 'event']);
-    });
-
-    it('fills empty buckets per group over a from/to range', async () => {
-      events.countEventsByWindow.mockResolvedValueOnce([
-        { windowStart: new Date('2026-09-01T01:00:00Z'), account: 'acc_1', count: 5 },
-        { windowStart: new Date('2026-09-01T00:00:00Z'), account: 'acc_2', count: 2 },
-      ]);
-      const res = await request(app).get('/events').query({ window: '1h', group_by: 'account', from: '2026-09-01T00:00:00Z', to: '2026-09-01T03:00:00Z' });
-      expect(res.status).toBe(200);
-      expect(res.body.meta.total).toBe(6); // 3 buckets x 2 accounts
-      expect(res.body.buckets).toEqual([
-        { windowStart: '2026-09-01T00:00:00.000Z', account: 'acc_1', count: 0 },
-        { windowStart: '2026-09-01T00:00:00.000Z', account: 'acc_2', count: 2 },
-        { windowStart: '2026-09-01T01:00:00.000Z', account: 'acc_1', count: 5 },
-        { windowStart: '2026-09-01T01:00:00.000Z', account: 'acc_2', count: 0 },
-        { windowStart: '2026-09-01T02:00:00.000Z', account: 'acc_1', count: 0 },
-        { windowStart: '2026-09-01T02:00:00.000Z', account: 'acc_2', count: 0 },
-      ]);
-    });
-
-    it('treats an empty group_by as absent', async () => {
-      const res = await request(app).get('/events').query({ window: '1h', group_by: '' });
-      expect(res.status).toBe(200);
-      expect(res.body.groupBy).toEqual([]);
-    });
-
-    it.each([
-      [{ group_by: 'account' }, /group_by: requires window/],
-      [{ window: '1h', group_by: 'plan' }, /group_by/],
-      [{ window: '1h', group_by: ',' }, /group_by/],
-    ])('rejects a bad group_by %j', async (query, message) => {
-      const res = await request(app).get('/events').query(query);
-      expect(res.status).toBe(400);
-      expect(res.body.error).toMatch(message);
+      expect(res.body.error).toMatch(/window: would produce more than 10000 buckets/);
+      expect(events.countEventsByWindow).not.toHaveBeenCalled();
     });
 
     it('treats an empty window as absent and returns the raw listing', async () => {
@@ -302,7 +235,7 @@ describe('GET /events', () => {
     });
 
     it('still validates from/to when window is set', async () => {
-      const res = await request(app).get('/events').query({ window: '1h', from: 'nope' });
+      const res = await request(app).get('/events').query({ window: '1h', from: 'nope', to: day.to });
       expect(res.status).toBe(400);
       expect(events.countEventsByWindow).not.toHaveBeenCalled();
     });

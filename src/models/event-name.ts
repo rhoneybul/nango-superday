@@ -10,9 +10,3 @@ export enum EventName {
   Logout = 'logout',
   Purchase = 'purchase',
 }
-
-export const EVENT_NAMES: readonly EventName[] = Object.values(EventName);
-
-export function isEventName(value: string): value is EventName {
-  return EVENT_NAMES.includes(value as EventName);
-}

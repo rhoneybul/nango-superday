@@ -49,60 +49,19 @@ function parseConfig(raw) {
   } catch (e) {
     throw new Error(`${CONFIG_PATH}: not valid JSON (${e.message})`);
   }
+  // Only the fields whose absence would otherwise fail in a confusing way are checked; k6 reports the rest.
   const problems = [];
-  const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
-
-  if (!isObject(cfg)) problems.push('top level must be an object');
+  if (typeof cfg.target !== 'string' || !/^https?:\/\//.test(cfg.target)) problems.push('target: must be an http(s) URL, e.g. "http://localhost:3000"');
+  if (typeof cfg.duration !== 'string' || !/^\d+(ms|s|m|h)$/.test(cfg.duration)) problems.push('duration: must be <number><ms|s|m|h>, e.g. "30s", "5m"');
+  if (!Array.isArray(cfg.events) || cfg.events.length === 0) problems.push('events: must be a non-empty array');
   else {
-    if (typeof cfg.target !== 'string' || !/^https?:\/\//.test(cfg.target)) {
-      problems.push('target: must be an http(s) URL, e.g. "http://localhost:3000"');
-    }
-    if (typeof cfg.duration !== 'string' || !/^\d+(ms|s|m|h)$/.test(cfg.duration)) {
-      problems.push('duration: must be <number><ms|s|m|h>, e.g. "30s", "5m"');
-    }
-    if (!Array.isArray(cfg.events) || cfg.events.length === 0) {
-      problems.push('events: must be a non-empty array');
-    } else {
-      cfg.events.forEach((entry, i) => {
-        const at = `events[${i}]`;
-        if (!isObject(entry)) return problems.push(`${at}: must be an object`);
-        if (typeof entry.account_id !== 'string' || entry.account_id.trim() === '') {
-          problems.push(`${at}.account_id: must be a non-empty string`);
-        }
-        if (typeof entry.event_name !== 'string' || entry.event_name.trim() === '') {
-          problems.push(`${at}.event_name: must be a non-empty string`);
-        }
-        if (typeof entry.rps !== 'number' || !(entry.rps > 0)) {
-          problems.push(`${at}.rps: must be a number greater than 0`);
-        }
-        if (entry.maxVUs !== undefined && !(Number.isInteger(entry.maxVUs) && entry.maxVUs > 0)) {
-          problems.push(`${at}.maxVUs: must be a positive integer`);
-        }
-      });
-    }
-    if (cfg.expectedStatuses !== undefined) {
-      const ok = Array.isArray(cfg.expectedStatuses) && cfg.expectedStatuses.length > 0
-        && cfg.expectedStatuses.every((n) => Number.isInteger(n) && n >= 100 && n <= 599);
-      if (!ok) problems.push('expectedStatuses: must be a non-empty array of HTTP status codes, e.g. [202, 429]');
-    }
-    if (cfg.thresholds !== undefined) {
-      if (!isObject(cfg.thresholds)) problems.push('thresholds: must be an object');
-      else {
-        const t = cfg.thresholds;
-        if (t.p95Ms !== undefined && !(typeof t.p95Ms === 'number' && t.p95Ms > 0)) {
-          problems.push('thresholds.p95Ms: must be a number of milliseconds greater than 0');
-        }
-        if (t.maxErrorRate !== undefined && !(typeof t.maxErrorRate === 'number' && t.maxErrorRate >= 0 && t.maxErrorRate <= 1)) {
-          problems.push('thresholds.maxErrorRate: must be a fraction between 0 and 1');
-        }
-        if (t.minSuccessfulRps !== undefined && !(typeof t.minSuccessfulRps === 'number' && t.minSuccessfulRps > 0)) {
-          problems.push('thresholds.minSuccessfulRps: must be a number of 201 responses per second greater than 0');
-        }
-      }
-    }
+    cfg.events.forEach((entry, i) => {
+      if (!entry || typeof entry.account_id !== 'string' || typeof entry.event_name !== 'string') problems.push(`events[${i}]: needs account_id and event_name`);
+      if (!entry || typeof entry.rps !== 'number' || !(entry.rps > 0)) problems.push(`events[${i}].rps: must be a number greater than 0`);
+    });
   }
   if (problems.length) throw new Error(`${CONFIG_PATH}:\n  - ${problems.join('\n  - ')}`);
-  return Object.assign({ thresholds: {}, expectedStatuses: [202] }, cfg);
+  return Object.assign({ thresholds: {}, expectedStatuses: [201] }, cfg);
 }
 
 // ---------------------------------------------------------------------------

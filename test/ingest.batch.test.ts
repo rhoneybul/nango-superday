@@ -1,7 +1,7 @@
 import request from 'supertest';
 import { describe, expect, it, vi } from 'vitest';
 import { app } from '../src/app';
-import { accounts, events, makeAccount, publisher } from './helpers';
+import { accounts, events, publisher } from './helpers';
 
 vi.mock('../src/models/event.model');
 vi.mock('../src/models/account.model');
@@ -50,7 +50,7 @@ describe('POST /ingest/batch', () => {
   });
 
   it('lists unknown accounts by event index and queues nothing', async () => {
-    accounts.findAccount.mockImplementation(async (id) => (id === 'acc_nope' ? null : makeAccount({ id })));
+    accounts.accountExists.mockImplementation(async (id) => id !== 'acc_nope');
     const res = await request(app)
       .post('/ingest/batch')
       .send({ events: [ok('acc_nope', 'signup'), ok('acc_ok', 'signup'), ok('acc_nope', 'login')] });

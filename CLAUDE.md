@@ -33,13 +33,13 @@ Event ingestion API. Express 5 + TypeScript + RabbitMQ 4 (amqplib) + Prisma 7 (e
 src/config/      typed config from env via Zod. ONLY place that reads process.env. Import `config` from here.
 src/routes/      URL → controller wiring only
 src/controllers/ HTTP concerns: status codes, response shape, `next(err)`. No validation logic.
-src/services/    all input validation + business logic. Throws ValidationError (400) from src/lib/errors.
+src/services/    all input validation + business logic. Throws HttpError from src/lib/errors.
 src/queue/       topology.ts (exchange `events` → quorum queue `events` with x-dead-letter-exchange `events.dlx` + x-delivery-limit 5 → `events.dlq`; `assertTopology`), message.ts (EventMessage zod codec), publisher.ts (`startPublisher` with amqplib recovery, `publishEvent` on a confirm channel; rejects while disconnected → 500).
 src/consumer.ts  `handleMessage`: decode fail → nack requeue=false (DLQ now); insert fail → nack requeue=true (broker dead-letters after the delivery limit); else ack. `main()` connects (recovery), prefetch 50, consumes.
 src/models/      Prisma data access for `events`. Receives already-validated input. Raw SQL only for `countByWindow`. `account.model.ts` (`findAccount`, `upsertAccount`); `seeded-accounts.ts` (`SEEDED_ACCOUNTS`: id, name, mainContact — the only place accounts are defined).
-src/middleware/require-account.ts  `requireIngestAccount` and `requireAccountIn('listEvents')`: cached account lookup, NotFoundError → 404. Runs after validation and before the rate limiter.
-src/services/account.service.ts    `getAccount` / `requireAccount` through the cache (key `account:<id>`; hit TTL `ACCOUNT_CACHE_TTL_SECONDS`, miss cached 30s as the string `missing`).
-src/lib/redis.ts, src/lib/cache.ts  the one shared Redis client (`undefined` without REDIS_URL) and the `Cache` interface over it (in-memory Map fallback; Redis errors → warn + miss).
+src/middleware/require-account.ts  `requireIngestAccount` (404), `requireEventsAccount` (404 when the filter is set), `requireBatchAccounts` (400 listing `events.<i>.account_id`). Run after validation and before the rate limiter.
+src/services/account.service.ts    `requireAccount(id)`: primary-key lookup, `HttpError(404)` when missing. No cache: the table is tiny and the lookup is sub-millisecond.
+src/lib/redis.ts, src/lib/rate-limit-store.ts  the Redis client (`undefined` without REDIS_URL) and the express-rate-limit store over it (MemoryStore fallback), shared by the /ingest limiter and `batchRateLimit`.
 src/seed.ts      seed entry point (compiled to dist/seed.js for compose)
 src/lib/         prisma client (pg adapter), HttpError/ValidationError + errorHandler
 src/app.ts       the express app
@@ -61,18 +61,18 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 ## API
 
 - `POST /ingest` body `{ account_id, event_name, timestamp? }` → 202 `{ data: { accountId, eventName, timestamp } }` once the broker confirmed the publish (no DB id yet; the consumer inserts later). `account_id` must be a seeded account → otherwise `404 { error: "Account <id> not found" }` (checked after validation, before the rate limit, so unknown accounts consume no quota). Missing timestamp → the API's receive time. Broker down → 500.
-- `POST /ingest/batch` body `{ events: [{ account_id, event_name, timestamp }] }` (1–100 events, `timestamp` required) → 202 `{ data: { queued } }`. Unlike every other route this one has no middleware: `ingestBatch(body)` in `src/services/event.service.ts` validates the raw body (zod, one `details` entry per problem at `events.<i>.<field>`), checks each distinct account (unknown → 400 listing them), applies the batch limit (`INGEST_BATCH_RATE_LIMIT_PER_MINUTE`, 10 per account per minute, keys `batch:<account>` in `src/lib/rate-limit-store.ts`; any account over → `RateLimitError` → `429 { error, details: [{ account, limit }] }`, recorded in `ingest_batch_rate_limited_*`), and only then publishes every event. All-or-nothing.
+- `POST /ingest/batch` body `{ events: [{ account_id, event_name, timestamp }] }` (1–100 events, `timestamp` required) → 202 `{ data: { queued } }`. Same middleware chain as single ingest: `validateIngestBatch` (400, `details` per problem at `events.<i>.<field>`), `requireBatchAccounts` (400 listing unknown accounts), `batchRateLimit` (`INGEST_BATCH_RATE_LIMIT_PER_MINUTE`, 10 per account per minute, keys `batch:<account>`; any account over → `429 { error, details: [{ account, limit }] }`, recorded in `ingest_batch_rate_limited_*`). All-or-nothing.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
   - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`; page with `offset`.
-  - With `window` (**aggregation bucket size**: `minute|hour|day` or `<n><s|m|h|d|w>`, max `366d`): `{ window, windowSeconds, buckets: [{ windowStart, count }], meta: { total, limit, offset }, filters }`. Buckets come from Postgres `date_bin` aligned to `BUCKET_ORIGIN_MS` (1970-01-05, a Monday → hours/days/weeks start on the hour/00:00 UTC/Monday). With both `from` and `to`, `fillEmptyBuckets` in the service adds the missing buckets as 0 so a 24h range at `1h` is exactly 24 values; without them only non-empty buckets are returned. Buckets are paged with `limit`/`offset` (`meta.total` = row count). `group_by=account|event|account,event` (requires `window`) adds `account`/`event` to each row, echoed as `groupBy`; the SQL adds the columns to SELECT/GROUP BY and the zero-fill runs per group seen in the range. More than `EVENTS_MAX_BUCKETS` (10000) buckets → 400, checked up front from `from`/`to` and via a `LIMIT` guard otherwise.
+  - With `window` (**aggregation bucket size**: `minute|hour|day` or `<n><s|m|h|d|w>`; **requires `from` and `to`**): `{ window, windowSeconds, buckets: [{ windowStart, count }], meta: { total, limit, offset }, filters }`. Buckets come from Postgres `date_bin` aligned to `BUCKET_ORIGIN_MS` (1970-01-05, a Monday → hours/days/weeks start on the hour/00:00 UTC/Monday); `fillEmptyBuckets` in the service adds missing buckets as 0, so a 24h range at `1h` is exactly 24 values. Buckets are paged with `limit`/`offset` (`meta.total` = bucket count). More than `EVENTS_MAX_BUCKETS` (10000) buckets → 400, checked in validation from `from`/`to`/`window`.
   - Repeated query params (`?account=a&account=b`) → 400. Empty string params are treated as absent.
 - Errors: `400 { error, details? }` for validation, `404 { error: "Account <id> not found" }` (NotFoundError), `500 { error: "Internal server error" }` otherwise (no leak).
 - `GET /health` → `{ status: "ok" }`.
 
 ## Conventions
 
-- Accounts: to onboard one, add it to `SEEDED_ACCOUNTS` and run `npm run seed` (no migration). The cache picks it up within 30s (miss TTL) or `ACCOUNT_CACHE_TTL_SECONDS` for a changed name/contact.
+- Accounts: to onboard one, add its id to `SEEDED_ACCOUNT_IDS` and run `npm run seed` (no migration). Accounts are ids only.
 - Tests `vi.mock` both model modules (`event.model`, `account.model`) and `queue/publisher`; helpers.ts makes every account id exist and every publish succeed unless a test overrides `findAccount` / `publishEvent`. Config requires RABBITMQ_URL (set in vitest.config.ts).
 - Queue args are fixed at declaration (RabbitMQ refuses a redeclare with different args): delete the queue in the management UI before changing DELIVERY_LIMIT. Grafana dashboard `queue.json` uses RabbitMQ's per-queue metrics (`prometheus.return_per_object_metrics = true` in rabbitmq/rabbitmq.conf). No REDIS_URL, so the cache is in memory and shared within a test file: use distinct account ids per test when counting lookups.
 - Validation messages are asserted by regex in tests — changing wording means updating `test/`.

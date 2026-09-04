@@ -1,6 +1,5 @@
 import { beforeEach, vi } from 'vitest';
 import * as accountModel from '../src/models/account.model';
-import type { Account } from '../src/models/account.model';
 import * as model from '../src/models/event.model';
 import type { EventRecord } from '../src/models/event.model';
 import * as publisherModule from '../src/queue/publisher';
@@ -26,15 +25,11 @@ export function makeEvent(overrides: Partial<EventRecord> = {}): EventRecord {
   };
 }
 
-export function makeAccount(overrides: Partial<Account> = {}): Account {
-  return { id: 'acc_1', name: 'Acme Corp', mainContact: 'jane.doe@acme.example', ...overrides };
-}
-
 // Harmless defaults so a test only has to override what it cares about.
-// Every account id exists unless a test says otherwise (findAccount.mockResolvedValueOnce(null)).
+// Every account id exists unless a test says otherwise (accountExists.mockResolvedValueOnce(false)).
 beforeEach(() => {
   vi.resetAllMocks();
-  accounts.findAccount.mockImplementation(async (id) => makeAccount({ id }));
+  accounts.accountExists.mockResolvedValue(true);
   events.createEvent.mockImplementation(async (accountId, eventName, timestamp) =>
     makeEvent({ accountId, eventName, timestamp: timestamp ?? new Date() }),
   );

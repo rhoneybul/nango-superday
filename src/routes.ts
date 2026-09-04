@@ -1,10 +1,11 @@
 import { Router } from 'express';
 import * as eventController from './controllers/event.controller';
 import { metrics } from './lib/metrics';
-import { ingestRateLimit } from './middleware/rate-limit';
-import { requireAccountIn, requireIngestAccount } from './middleware/require-account';
-import { validateIngest, validateListEvents } from './middleware/validation';
+import { batchRateLimit, ingestRateLimit } from './middleware/rate-limit';
+import { requireBatchAccounts, requireEventsAccount, requireIngestAccount } from './middleware/require-account';
+import { validateIngest, validateIngestBatch, validateListEvents } from './middleware/validation';
 
+/** Every route reads: validate → check accounts → rate limit → controller. */
 export const router = Router();
 
 router.get('/health', (_req, res) => {
@@ -12,5 +13,5 @@ router.get('/health', (_req, res) => {
 });
 router.get('/metrics', metrics);
 router.post('/ingest', validateIngest, requireIngestAccount, ingestRateLimit, eventController.ingest);
-router.post('/ingest/batch', eventController.ingestBatchEvents); // validation, account check and rate limit happen in the service
-router.get('/events', validateListEvents, requireAccountIn('listEvents'), eventController.list);
+router.post('/ingest/batch', validateIngestBatch, requireBatchAccounts, batchRateLimit, eventController.ingestBatchEvents);
+router.get('/events', validateListEvents, requireEventsAccount, eventController.list);

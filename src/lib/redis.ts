@@ -3,9 +3,9 @@ import { config } from '../config';
 import { log } from './logger';
 
 /**
- * The one Redis connection, shared by the rate-limit store and the account
- * cache. `undefined` when REDIS_URL is unset (tests, local dev without Redis):
- * both consumers then fall back to in-process memory.
+ * The Redis connection behind the rate-limit counters. `undefined` when
+ * REDIS_URL is unset (tests, local dev without Redis): the counters then
+ * live in process memory.
  */
 function connect(url: string) {
   const client = createClient({ url });

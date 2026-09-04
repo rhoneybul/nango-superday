@@ -584,53 +584,6 @@
             },
             "description": "window = bucket size (minute, hour, day, or 15m, 6h, 1w). Buckets align to the clock; a 24h range at 1h is exactly 24 values."
           }
-        },
-        {
-          "name": "Fetch window grouped by account and event",
-          "event": [
-            {
-              "listen": "test",
-              "script": {
-                "type": "text/javascript",
-                "exec": [
-                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"each row carries account and event\", () => { const b = pm.response.json(); pm.expect(b.groupBy).to.eql([\"account\", \"event\"]); b.buckets.forEach(r => pm.expect(r).to.have.keys(\"windowStart\", \"account\", \"event\", \"count\")); });"
-                ]
-              }
-            }
-          ],
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{baseUrl}}/events?window=1h&group_by=account,event&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
-              "host": [
-                "{{baseUrl}}"
-              ],
-              "path": [
-                "events"
-              ],
-              "query": [
-                {
-                  "key": "window",
-                  "value": "1h"
-                },
-                {
-                  "key": "group_by",
-                  "value": "account,event"
-                },
-                {
-                  "key": "from",
-                  "value": "2026-09-01T00:00:00Z"
-                },
-                {
-                  "key": "to",
-                  "value": "2026-09-02T00:00:00Z"
-                }
-              ]
-            },
-            "description": "group_by=account, event, or account,event. Every group seen in the range gets the full set of buckets."
-          }
         }
       ]
     },

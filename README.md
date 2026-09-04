@@ -32,23 +32,14 @@ npm run dev:consumer         # the consumer, in another terminal
 
 ## Accounts
 
-Events belong to accounts, and the API only accepts events for accounts it knows. The list lives in
-`src/models/seeded-accounts.ts` (`id`, `name`, `mainContact`) and `npm run seed` upserts it into the
-`accounts` table (compose does this on every start, so re-running is safe):
+Events belong to accounts (customers), and the API only accepts events for accounts it knows. The list of ids
+lives in `src/models/seeded-accounts.ts` and `npm run seed` upserts it into the `accounts` table (compose does
+this on every start, so re-running is safe): `acc_acme`, `acc_globex`, `acc_initech`, `acc_umbrella`, `acc_hooli`.
 
-| id             | name          | main contact                    |
-|----------------|---------------|---------------------------------|
-| `acc_acme`     | Acme Corp     | jane.doe@acme.example           |
-| `acc_globex`   | Globex        | hank.scorpio@globex.example     |
-| `acc_initech`  | Initech       | peter.gibbons@initech.example   |
-| `acc_umbrella` | Umbrella Corp | ops@umbrella.example            |
-| `acc_hooli`    | Hooli         | gavin.belson@hooli.example      |
-
-`POST /ingest` and the `account` filter on `GET /events` both check the id and answer
-`404 { "error": "Account acc_x not found" }` for anything else. The check is cached in Redis (`account:<id>`,
-`ACCOUNT_CACHE_TTL_SECONDS`, default 300; a miss is cached for 30s) so it costs a Redis round trip rather
-than a database query per request; without `REDIS_URL` the cache is in process memory. To onboard an
-account, add it to the list and run the seed; it is live within 30s.
+`POST /ingest` and the `account` filter on `GET /events` answer `404 { "error": "Account acc_x not found" }` for
+anything else; `POST /ingest/batch` lists the offending events in a `400`. The check is a primary-key lookup and
+runs before the rate limiter, so unknown ids never consume quota. To onboard an account, add its id to the list
+and re-run the seed.
 
 ## Endpoints
 
@@ -85,8 +76,7 @@ Batches have their own limit: `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` (default 10) 
 | `event`   | Filter by event name (must be a known `EventName`)                          |
 | `from`    | Inclusive lower bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `to`      | Inclusive upper bound on `timestamp` (ISO-8601 or epoch ms)                 |
-| `window`  | Aggregation bucket size: `minute`, `hour`, `day`, or `30s`, `15m`, `1h`, `1d`, `1w` (max `366d`). Switches to aggregated mode |
-| `group_by`| Aggregated mode only: `account`, `event`, or `account,event`. One row per bucket per group, each row also carrying `account`/`event` |
+| `window`  | Aggregation bucket size: `minute`, `hour`, `day`, or `30s`, `15m`, `1h`, `1d`, `1w`. Switches to aggregated mode; requires `from` and `to` |
 | `limit`   | Page size (default `EVENTS_DEFAULT_LIMIT`, max `EVENTS_MAX_LIMIT`)          |
 | `offset`  | Page offset                                                                 |
 
@@ -97,19 +87,11 @@ Without `window` the response is the raw events, newest first:
 ```
 
 With `window` the response is a count per bucket, oldest first. Buckets are aligned to the clock (a `1h`
-bucket starts on the hour, `1d` at 00:00 UTC, `1w` on a Monday), and when `from` and `to` are given every
-bucket in the range is present, so a 24h range at `window=1h` is exactly 24 values, empty ones as `0`.
+bucket starts on the hour, `1d` at 00:00 UTC, `1w` on a Monday) and every bucket in `from`..`to` is present,
+so a 24h range at `window=1h` is exactly 24 values, empty ones as `0`.
 Buckets are paged with `limit`/`offset`; `meta.total` is the number of buckets in the range. A query that
 would produce more than `EVENTS_MAX_BUCKETS` (10000) buckets is a `400`.
 
-Add `group_by=account`, `group_by=event` or `group_by=account,event` to break each bucket down per account and/or
-event name: rows become `{ windowStart, account?, event?, count }`, the response echoes `groupBy`, and with `from`/`to`
-every group seen in the range gets the full set of buckets (zeros filled). The bucket cap counts rows, so grouping a
-wide range may need a larger window.
-
-```bash
-curl 'localhost:3000/events?window=1h&group_by=account,event&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z'
-```
 
 ```bash
 curl 'localhost:3000/events?account=acc_acme&window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z'
@@ -177,11 +159,11 @@ src/
   routes.ts      URL → validation middleware → controller wiring
   middleware/    request id, request logging, input validation (zod), account check (404), rate limiting
   controllers/   HTTP concerns: status codes, response shape
-  services/      business logic on validated input: ingest publishes to the queue, listing queries the model; cached account lookups
+  services/      business logic on validated input: ingest publishes to the queue, listing queries the model
   models/        Prisma data access (events, accounts tables), the seeded account list
   queue/         RabbitMQ topology (exchange, queue, dead-letter queue), message codec, the API's publisher
   consumer.ts    the consumer service: queue → Postgres
-  lib/           prisma client, shared Redis client + cache, error types/handler, pino logger, Prometheus metrics registry
+  lib/           prisma client, Redis client + rate-limit store, HttpError/handler, pino logger, Prometheus metrics registry
   generated/     Prisma client output (gitignored, created by `prisma generate`)
   seed.ts        upserts the seeded accounts (`npm run seed`; run by compose on start)
 prisma/          schema + migrations
@@ -212,4 +194,4 @@ with the Collection Runner to trigger 429s and the Slack alerts). Every request 
 npm test
 ```
 
-No database, Redis or RabbitMQ required — the model layer (events, accounts) and the queue publisher are stubbed, and the account cache runs in memory. `test/consumer.test.ts` calls the consumer's message handler with a fake channel.
+No database, Redis or RabbitMQ required — the model layer (events, accounts) and the queue publisher are stubbed,  `test/consumer.test.ts` calls the consumer's message handler with a fake channel.
