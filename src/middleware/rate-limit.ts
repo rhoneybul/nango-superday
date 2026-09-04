@@ -3,6 +3,7 @@ import { RedisStore } from 'rate-limit-redis';
 import { createClient } from 'redis';
 import { config } from '../config';
 import { log } from '../lib/logger';
+import { ingestRateLimited, ingestRateLimitedLastSeen } from '../lib/metrics';
 
 function redisStore(url: string) {
   const client = createClient({ url });
@@ -15,6 +16,8 @@ function redisStore(url: string) {
  * Rate limit for POST /ingest, keyed on `account_id:event_name` so a noisy
  * event cannot starve an account's other (critical) events.
  * Counters live in Redis when REDIS_URL is set, otherwise in memory (tests, local dev).
+ * Every rejection is recorded in the rate-limit metrics; that is what the
+ * RateLimitExceeded alert (grafana/provisioning/alerting/rules.yml) is built on.
  */
 export const ingestRateLimit = rateLimit({
   windowMs: 60_000,
@@ -24,4 +27,10 @@ export const ingestRateLimit = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   store: config.redisUrl ? redisStore(config.redisUrl) : undefined,
+  handler: (req, res, _next, options) => {
+    const labels = { account_id: String(req.body?.account_id), event_name: String(req.body?.event_name) };
+    ingestRateLimited.inc(labels);
+    ingestRateLimitedLastSeen.set(labels, Date.now() / 1000);
+    res.status(options.statusCode).json(options.message);
+  },
 });

@@ -1,0 +1,23 @@
+# Where alerts are delivered. Slack (#superday-rob) is the default. To fan the
+# same alerts out to another consumer, add a receiver to this contact point;
+# to send only some alerts somewhere, add a contact point and a route in
+# notification-policies.yml. Reloaded on Grafana start; editable in the UI too.
+# Docs: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/
+apiVersion: 1
+contactPoints:
+  - orgId: 1
+    name: slack
+    receivers:
+      - uid: slack-superday-rob
+        type: slack
+        settings:
+          # Slack incoming webhook (bound to #superday-rob when created); from the SLACK_WEBHOOK_URL env var.
+          # For a bot token instead: token: $SLACK_BOT_TOKEN, recipient: '#superday-rob'.
+          url: $SLACK_WEBHOOK_URL
+          title: '{{ if eq .Status "firing" }}:rotating_light: {{ else }}:white_check_mark: Resolved: {{ end }}{{ .CommonLabels.alertname }}'
+          text: '{{ if eq .Status "firing" }}{{ .CommonAnnotations.summary }}{{ else }}{{ .CommonAnnotations.resolved }}{{ end }}'
+      # Generic webhook consumer (receives Grafana's alert JSON, firing and resolved):
+      # - uid: ops-webhook
+      #   type: webhook
+      #   settings:
+      #     url: https://example.com/hooks/alerts

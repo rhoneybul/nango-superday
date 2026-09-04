@@ -25,6 +25,15 @@ services:
       timeout: 3s
       retries: 10
 
+  # Scrapes the API's /metrics; Grafana's alert rules query it. Config: ./prometheus/prometheus.yml. UI on :9090.
+  prometheus:
+    image: prom/prometheus:v3.14.0
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+
   grafana:
     image: grafana/grafana:latest
     depends_on:
@@ -33,6 +42,10 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      # Alerting (grafana/provisioning/alerting): the Slack contact point posts to #superday-rob
+      # through this incoming webhook. Set SLACK_WEBHOOK_URL in .env; the placeholder keeps
+      # Grafana booting without one (deliveries then fail until it is set).
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-https://hooks.slack.com/services/REPLACE/WITH/YOURS}
     ports:
       - "${GRAFANA_PORT:-3001}:3000"
     volumes:
@@ -83,4 +96,5 @@ services:
 
 volumes:
   pgdata:
+  prometheus-data:
   grafana-data:

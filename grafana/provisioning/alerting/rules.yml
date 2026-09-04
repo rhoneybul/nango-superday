@@ -1,0 +1,43 @@
+# Alert rules. Grafana evaluates each rule's query against Prometheus on
+# `interval`; every series that passes the threshold is a firing alert
+# instance, and it resolves when it no longer passes. Both go through
+# notification-policies.yml to the contact points in contact-points.yml.
+# Docs: https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/#import-alert-rules
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: ingest
+    folder: nango-events
+    interval: 10s
+    rules:
+      # The API records every 429 it sends in ingest_rate_limited_last_seen_timestamp_seconds
+      # (src/lib/metrics.ts). A pair is alerting while its latest rejection is under a
+      # minute old, and resolves after a minute without one. One instance per pair.
+      - uid: ingest-rate-limit
+        title: RateLimitExceeded
+        condition: C
+        for: 0s             # fire on the first evaluation that sees it
+        noDataState: OK     # no series = nothing has ever been rate limited
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Account {{ $labels.account_id }} is over its {{ $labels.event_name }} ingest limit: its {{ $labels.event_name }} events are being rejected with 429.'
+          resolved: 'Account {{ $labels.account_id }} is back under its {{ $labels.event_name }} ingest limit: no rejections for a minute.'
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 60, to: 0 }
+            model:
+              refId: A
+              instant: true
+              # seconds since the last rejection, per pair (max across API instances)
+              expr: time() - max by (account_id, event_name) (ingest_rate_limited_last_seen_timestamp_seconds)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [60] }

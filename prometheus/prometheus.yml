@@ -1,0 +1,8 @@
+# Scrapes the API's GET /metrics. Grafana's alert rules query Prometheus, so the
+# path from "a request was rate limited" to "Slack message" never touches Postgres.
+global:
+  scrape_interval: 10s
+scrape_configs:
+  - job_name: api
+    static_configs:
+      - targets: ['api:3000']
