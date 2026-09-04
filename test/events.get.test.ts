@@ -151,6 +151,7 @@ describe('GET /events', () => {
       expect(res.body).toEqual({
         window: '1h',
         windowSeconds: 3600,
+        groupBy: [],
         buckets: [
           { windowStart: '2026-09-01T10:00:00.000Z', count: 3 },
           { windowStart: '2026-09-01T11:00:00.000Z', count: 1 },
@@ -158,7 +159,7 @@ describe('GET /events', () => {
         meta: { total: 2, limit: 50, offset: 0 },
         filters: { account: 'acc_1', event: 'signup' },
       });
-      expect(events.countEventsByWindow).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'signup' }, 3600, 10001);
+      expect(events.countEventsByWindow).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'signup' }, 3600, 10001, []);
       expect(events.findEvents).not.toHaveBeenCalled();
       expect(events.countEvents).not.toHaveBeenCalled();
     });
@@ -210,7 +211,7 @@ describe('GET /events', () => {
       const res = await request(app).get('/events').query({ window });
       expect(res.status).toBe(200);
       expect(res.body.windowSeconds).toBe(seconds);
-      expect(events.countEventsByWindow).toHaveBeenCalledWith(expect.anything(), seconds, 10001);
+      expect(events.countEventsByWindow).toHaveBeenCalledWith(expect.anything(), seconds, 10001, []);
     });
 
     it('passes from/to through to the windowed query', async () => {
@@ -219,6 +220,7 @@ describe('GET /events', () => {
         { timestamp: { gte: new Date('2026-09-01T00:00:00Z'), lte: new Date('2026-09-03T00:00:00Z') } },
         86400,
         10001,
+        [],
       );
     });
 
@@ -241,6 +243,55 @@ describe('GET /events', () => {
       const res = await request(app).get('/events').query({ window: '1s' });
       expect(res.status).toBe(400);
       expect(res.body.error).toMatch(/more than 10000 buckets/);
+    });
+
+    it('groups buckets by account and event when asked', async () => {
+      events.countEventsByWindow.mockResolvedValueOnce([
+        { windowStart: new Date('2026-09-01T10:00:00Z'), account: 'acc_1', event: 'login', count: 3 },
+        { windowStart: new Date('2026-09-01T10:00:00Z'), account: 'acc_2', event: 'signup', count: 1 },
+      ]);
+      const res = await request(app).get('/events').query({ window: '1h', group_by: 'account,event' });
+      expect(res.status).toBe(200);
+      expect(res.body.groupBy).toEqual(['account', 'event']);
+      expect(res.body.buckets).toEqual([
+        { windowStart: '2026-09-01T10:00:00.000Z', account: 'acc_1', event: 'login', count: 3 },
+        { windowStart: '2026-09-01T10:00:00.000Z', account: 'acc_2', event: 'signup', count: 1 },
+      ]);
+      expect(events.countEventsByWindow).toHaveBeenCalledWith({}, 3600, 10001, ['account', 'event']);
+    });
+
+    it('fills empty buckets per group over a from/to range', async () => {
+      events.countEventsByWindow.mockResolvedValueOnce([
+        { windowStart: new Date('2026-09-01T01:00:00Z'), account: 'acc_1', count: 5 },
+        { windowStart: new Date('2026-09-01T00:00:00Z'), account: 'acc_2', count: 2 },
+      ]);
+      const res = await request(app).get('/events').query({ window: '1h', group_by: 'account', from: '2026-09-01T00:00:00Z', to: '2026-09-01T03:00:00Z' });
+      expect(res.status).toBe(200);
+      expect(res.body.meta.total).toBe(6); // 3 buckets x 2 accounts
+      expect(res.body.buckets).toEqual([
+        { windowStart: '2026-09-01T00:00:00.000Z', account: 'acc_1', count: 0 },
+        { windowStart: '2026-09-01T00:00:00.000Z', account: 'acc_2', count: 2 },
+        { windowStart: '2026-09-01T01:00:00.000Z', account: 'acc_1', count: 5 },
+        { windowStart: '2026-09-01T01:00:00.000Z', account: 'acc_2', count: 0 },
+        { windowStart: '2026-09-01T02:00:00.000Z', account: 'acc_1', count: 0 },
+        { windowStart: '2026-09-01T02:00:00.000Z', account: 'acc_2', count: 0 },
+      ]);
+    });
+
+    it('treats an empty group_by as absent', async () => {
+      const res = await request(app).get('/events').query({ window: '1h', group_by: '' });
+      expect(res.status).toBe(200);
+      expect(res.body.groupBy).toEqual([]);
+    });
+
+    it.each([
+      [{ group_by: 'account' }, /group_by: requires window/],
+      [{ window: '1h', group_by: 'plan' }, /group_by/],
+      [{ window: '1h', group_by: ',' }, /group_by/],
+    ])('rejects a bad group_by %j', async (query, message) => {
+      const res = await request(app).get('/events').query(query);
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(message);
     });
 
     it('rejects cursor combined with window', async () => {

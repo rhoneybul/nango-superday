@@ -91,6 +91,7 @@ services:
       EVENTS_MAX_LIMIT: 1000
       EVENTS_MAX_BUCKETS: 10000
       INGEST_RATE_LIMIT_PER_MINUTE: ${INGEST_RATE_LIMIT_PER_MINUTE:-100}   # raise for load/throughput.json
+      INGEST_BATCH_RATE_LIMIT_PER_MINUTE: 10
       ACCOUNT_CACHE_TTL_SECONDS: 300
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info

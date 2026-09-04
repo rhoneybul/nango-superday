@@ -64,6 +64,19 @@ Returns `202` with the event as queued (`{ "data": { "accountId", "eventName", "
 
 Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. The account check runs before the limiter, so unknown accounts never consume quota. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
 
+### `POST /ingest/batch`
+
+```json
+{ "events": [
+  { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:00:00Z" },
+  { "account_id": "acc_1", "event_name": "login",  "timestamp": "2026-09-01T10:05:00Z" }
+] }
+```
+
+Up to 100 events in one request. Each is validated like a single ingest, except `timestamp` is required (a batch arrives after the fact, so "now" is not a sensible default). Any problem rejects the whole batch: `400 { "error", "details": [{ "path": "events.<index>.<field>", "message" }] }` with one entry per problem, including unknown accounts (`Account acc_x not found`). A valid batch is published to the queue event by event and answers `202 { "data": { "queued": n } }`.
+
+Batches have their own limit: `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` (default 10) batches per minute for each account a batch contains, so an account can push up to 1000 events a minute this way. Over the limit the whole batch is rejected with `429 { "error": "Too many requests", "details": [{ "account", "limit" }] }` and nothing is queued. Rejections are counted in `ingest_batch_rate_limited_total{account_id}` and raise the separate `BatchRateLimitExceeded` alert (see [Alerting](#alerting)).
+
 ### `GET /events`
 
 | Param     | Description                                                                 |
@@ -73,6 +86,7 @@ Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `acco
 | `from`    | Inclusive lower bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `to`      | Inclusive upper bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `window`  | Aggregation bucket size: `minute`, `hour`, `day`, or `30s`, `15m`, `1h`, `1d`, `1w` (max `366d`). Switches to aggregated mode |
+| `group_by`| Aggregated mode only: `account`, `event`, or `account,event`. One row per bucket per group, each row also carrying `account`/`event` |
 | `limit`   | Page size (default `EVENTS_DEFAULT_LIMIT`, max `EVENTS_MAX_LIMIT`)          |
 | `offset`  | Page offset (simple paging; cost grows with depth)                          |
 | `cursor`  | Raw listing only: `meta.nextCursor` from the previous page (keyset paging; constant cost). Not with `offset` |
@@ -89,6 +103,15 @@ bucket in the range is present, so a 24h range at `window=1h` is exactly 24 valu
 Buckets are paged with `limit`/`offset`; `meta.total` is the number of buckets in the range. A query that
 would produce more than `EVENTS_MAX_BUCKETS` (10000) buckets is a `400`.
 
+Add `group_by=account`, `group_by=event` or `group_by=account,event` to break each bucket down per account and/or
+event name: rows become `{ windowStart, account?, event?, count }`, the response echoes `groupBy`, and with `from`/`to`
+every group seen in the range gets the full set of buckets (zeros filled). The bucket cap counts rows, so grouping a
+wide range may need a larger window.
+
+```bash
+curl 'localhost:3000/events?window=1h&group_by=account,event&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z'
+```
+
 ```bash
 curl 'localhost:3000/events?account=acc_acme&window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z'
 ```
@@ -104,7 +127,7 @@ curl 'localhost:3000/events?account=acc_acme&window=1h&from=2026-09-01T00:00:00Z
 
 Includes `http_requests_total` and `http_request_duration_seconds` (labels `method`, `route`, `status`) for every request, plus the rate-limit metrics below.
 
-Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest rejection), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
+Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (single-ingest rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest one), `ingest_batch_rate_limited_total{account_id}` and `ingest_batch_rate_limited_last_seen_timestamp_seconds{account_id}` (the same for batch rejections), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
 
 Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`; an unknown account returns `404 { "error": "Account acc_x not found" }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
 
@@ -118,7 +141,7 @@ Dead-letter queue: a message the consumer cannot decode is rejected and goes str
 
 Event driven, no database involved: the rate limiter records each 429 it sends as a metric, Prometheus scrapes it, and [Grafana alerting](https://grafana.com/docs/grafana/latest/alerting/) does the rest. Everything on the Grafana side is provisioned from `grafana/provisioning/alerting/` and also editable in the UI under Alerting:
 
-- `rules.yml` — the alert rules. `RateLimitExceeded` evaluates `time() - ingest_rate_limited_last_seen_timestamp_seconds < 60` every 10s: an `account_id` + `event_name` pair is alerting while its latest rejection is under a minute old, and resolves after a minute without one. One alert instance per pair.
+- `rules.yml` — the alert rules. `BatchRateLimitExceeded` does the same for `POST /ingest/batch` from `ingest_batch_rate_limited_last_seen_timestamp_seconds`, per `account_id` (batches are limited per account, not per event). `RateLimitExceeded` evaluates `time() - ingest_rate_limited_last_seen_timestamp_seconds < 60` every 10s: an `account_id` + `event_name` pair is alerting while its latest rejection is under a minute old, and resolves after a minute without one. One alert instance per pair.
 - `contact-points.yml` — where alerts go. Slack `#superday-rob` (bot token from `SLACK_BOT_TOKEN`, channel set by `recipient`) is the only one; add a `webhook`, `pagerduty`, `email`, … receiver to the same contact point to fan every alert out to another consumer.
 - `notification-policies.yml` — grouping (one notification per pair) and routing. Add a route with matchers to send only some alerts to another contact point.
 
@@ -129,6 +152,8 @@ Grafana handles state, deduplication and delivery. On firing, Slack gets:
 Once the pair has gone a minute without a rejection the same contact points get:
 
 > :white_check_mark: Resolved: RateLimitExceeded — Account acc_1 is back under its signup ingest limit: no rejections for a minute.
+
+The batch rule reads the same way: `BatchRateLimitExceeded — Account acc_1 is over its batch ingest limit: its POST /ingest/batch requests are being rejected with 429 (whole batches, nothing queued)`, resolving after a minute without a rejected batch.
 
 Adding an alert: record a metric in `src/lib/metrics.ts` at the point where the thing happens, then add a rule to `rules.yml` with a Prometheus query, a threshold, and `summary`/`resolved` annotations (one plain, actionable line each).
 
@@ -173,6 +198,10 @@ Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timest
 ## Dashboards
 
 Grafana (`:3001`) comes with three provisioned dashboards: **Event Queue** (queue and dead-letter queue depth, in-flight messages, consumers, message rates), **API HTTP** (requests/s, latency, error rate, rate-limit hits, from Prometheus) and **Events** (events over time, by name, top accounts, latest events, straight from Postgres). Source: `grafana/provisioning/dashboards/*.json`.
+
+## Demo
+
+[docs/demo-runbook.md](docs/demo-runbook.md) is the 15-minute demo script: a timed live run, a plain-language explanation of the rate limit, the metrics → alert pipeline, the queue and the query endpoint, and a file map.
 
 ## Postman
 

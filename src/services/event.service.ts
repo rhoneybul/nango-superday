@@ -3,7 +3,7 @@ import { encodeCursor, type EventCursor } from '../lib/cursor';
 import { ValidationError } from '../lib/errors';
 import type { EventName } from '../models/event-name';
 import * as events from '../models/event.model';
-import type { EventRecord, EventWhere, WindowBucket } from '../models/event.model';
+import type { EventRecord, EventWhere, WindowBucket, WindowGroup } from '../models/event.model';
 import type { EventMessage } from '../queue/message';
 import { publishEvent } from '../queue/publisher';
 
@@ -31,6 +31,12 @@ export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
   return message;
 }
 
+/** Publishes every event of an already-validated batch. Returns how many were queued. */
+export async function ingestBatch(inputs: IngestInput[]): Promise<{ queued: number }> {
+  await Promise.all(inputs.map((input) => ingestEvent(input)));
+  return { queued: inputs.length };
+}
+
 // ---------------------------------------------------------------------------
 // GET /events
 // ---------------------------------------------------------------------------
@@ -42,6 +48,8 @@ export interface ListEventsInput {
   to?: Date;
   /** Present → aggregated mode: counts per bucket of this size, instead of a raw listing. */
   window?: { label: string; seconds: number };
+  /** Aggregated mode only: one row per bucket per account and/or event instead of one per bucket. */
+  group_by?: WindowGroup[];
   limit: number;
   offset: number;
   /** Keyset cursor from a previous page's `meta.nextCursor` (raw listing only); exclusive with a non-zero offset. */
@@ -66,6 +74,8 @@ export interface EventListing {
 export interface EventWindowCounts {
   window: string;
   windowSeconds: number;
+  /** Echo of `group_by`; each bucket row then also carries `account` and/or `event`. */
+  groupBy: WindowGroup[];
   /** One entry per bucket, oldest first. With `from` and `to` every bucket in the range is present (empty ones as 0). */
   buckets: WindowBucket[];
   /** `total` is the number of buckets in the range; `buckets` is the page `offset`..`offset + limit`. */
@@ -74,7 +84,7 @@ export interface EventWindowCounts {
 }
 
 export async function listEvents(input: ListEventsInput): Promise<EventListing | EventWindowCounts> {
-  const { account, event, from, to, window, limit, offset, cursor } = input;
+  const { account, event, from, to, window, group_by: groupBy = [], limit, offset, cursor } = input;
 
   const where: EventWhere = {};
   if (account) where.accountId = account;
@@ -85,14 +95,15 @@ export async function listEvents(input: ListEventsInput): Promise<EventListing |
 
   if (window) {
     // One more than the cap: a full page means the range is too wide for this window.
-    const counted = await events.countEventsByWindow(where, window.seconds, config.eventsMaxBuckets + 1);
+    const counted = await events.countEventsByWindow(where, window.seconds, config.eventsMaxBuckets + 1, groupBy);
     if (counted.length > config.eventsMaxBuckets) {
-      throw new ValidationError(`window: would produce more than ${config.eventsMaxBuckets} buckets; use a larger window or a narrower from/to`);
+      throw new ValidationError(`window: would produce more than ${config.eventsMaxBuckets} buckets; use a larger window, a narrower from/to or fewer groups`);
     }
     const buckets = from && to ? fillEmptyBuckets(counted, from, to, window.seconds) : counted;
     return {
       window: window.label,
       windowSeconds: window.seconds,
+      groupBy,
       buckets: buckets.slice(offset, offset + limit),
       meta: { total: buckets.length, limit, offset },
       filters,
@@ -109,16 +120,28 @@ export async function listEvents(input: ListEventsInput): Promise<EventListing |
 
 /**
  * A 24h range with window=1h is 24 values, so buckets with no events are
- * added as 0. Buckets start at the same origin as the SQL (`BUCKET_ORIGIN_MS`,
- * see the model) and cover every start from bin(from) up to, but not
- * including, `to`; a bucket the database returned is always kept.
+ * added as 0. When grouped, every group that appears in the range gets the
+ * full set of buckets. Buckets start at the same origin as the SQL
+ * (`BUCKET_ORIGIN_MS`, see the model) and cover every start from bin(from)
+ * up to, but not including, `to`; a bucket the database returned is always kept.
  */
 function fillEmptyBuckets(counted: WindowBucket[], from: Date, to: Date, windowSeconds: number): WindowBucket[] {
   const windowMs = windowSeconds * 1000;
   const bin = (t: number) => events.BUCKET_ORIGIN_MS + Math.floor((t - events.BUCKET_ORIGIN_MS) / windowMs) * windowMs;
-  const byStart = new Map(counted.map((b) => [b.windowStart.getTime(), b.count]));
-  for (let start = bin(from.getTime()); start < to.getTime(); start += windowMs) {
-    if (!byStart.has(start)) byStart.set(start, 0);
+  const groupKey = (b: Pick<WindowBucket, 'account' | 'event'>) => JSON.stringify([b.account ?? null, b.event ?? null]);
+
+  const groups = new Map<string, Pick<WindowBucket, 'account' | 'event'>>();
+  for (const b of counted) groups.set(groupKey(b), { ...(b.account !== undefined && { account: b.account }), ...(b.event !== undefined && { event: b.event }) });
+  if (groups.size === 0) groups.set(groupKey({}), {}); // no data at all: still one (ungrouped) series of zeros
+
+  const rows = new Map(counted.map((b) => [`${groupKey(b)}@${b.windowStart.getTime()}`, b]));
+  for (const [key, group] of groups) {
+    for (let start = bin(from.getTime()); start < to.getTime(); start += windowMs) {
+      const id = `${key}@${start}`;
+      if (!rows.has(id)) rows.set(id, { windowStart: new Date(start), ...group, count: 0 });
+    }
   }
-  return [...byStart.entries()].sort(([a], [b]) => a - b).map(([start, count]) => ({ windowStart: new Date(start), count }));
+  return [...rows.values()].sort(
+    (a, b) => a.windowStart.getTime() - b.windowStart.getTime() || (a.account ?? '').localeCompare(b.account ?? '') || (a.event ?? '').localeCompare(b.event ?? ''),
+  );
 }

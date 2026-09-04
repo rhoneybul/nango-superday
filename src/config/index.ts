@@ -44,6 +44,8 @@ export const config = {
   eventsMaxBuckets: integer('EVENTS_MAX_BUCKETS', 10000),
   /** POST /ingest requests allowed per minute for each `account_id:event_name`. */
   ingestRateLimitPerMinute: integer('INGEST_RATE_LIMIT_PER_MINUTE', 100),
+  /** POST /ingest/batch requests allowed per minute for each account a batch contains (each batch ≤ 100 events). */
+  ingestBatchRateLimitPerMinute: integer('INGEST_BATCH_RATE_LIMIT_PER_MINUTE', 10),
   /** How long a successful account lookup stays cached (Redis, or memory without REDIS_URL). */
   accountCacheTtlSeconds: integer('ACCOUNT_CACHE_TTL_SECONDS', 300),
 };

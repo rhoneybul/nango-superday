@@ -51,6 +51,22 @@ export const ingestRateLimitedLastSeen = new Gauge({
   registers: [registry],
 });
 
+/** Incremented for every POST /ingest/batch rejected with 429 (per account: batches are limited per account, not per event). */
+export const ingestBatchRateLimited = new Counter({
+  name: 'ingest_batch_rate_limited_total',
+  help: 'POST /ingest/batch requests rejected by the per-account batch rate limit',
+  labelNames: ['account_id'] as const,
+  registers: [registry],
+});
+
+/** Unix time of the latest batch rejection per account; drives the BatchRateLimitExceeded alert the same way as the gauge above. */
+export const ingestBatchRateLimitedLastSeen = new Gauge({
+  name: 'ingest_batch_rate_limited_last_seen_timestamp_seconds',
+  help: 'Unix time of the most recent POST /ingest/batch rejected by the batch rate limit, per account_id',
+  labelNames: ['account_id'] as const,
+  registers: [registry],
+});
+
 export const metrics: RequestHandler = async (_req, res) => {
   res.type(registry.contentType).send(await registry.metrics());
 };

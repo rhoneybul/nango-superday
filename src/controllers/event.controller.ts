@@ -1,5 +1,5 @@
 import type { Validated } from '../middleware/validation';
-import { ingestEvent, listEvents, type IngestInput, type ListEventsInput } from '../services/event.service';
+import { ingestBatch, ingestEvent, listEvents, type IngestInput, type ListEventsInput } from '../services/event.service';
 
 /**
  * Controllers translate HTTP <-> service calls: they read the validated input
@@ -11,6 +11,11 @@ import { ingestEvent, listEvents, type IngestInput, type ListEventsInput } from 
 export const ingest: Validated<{ ingest: IngestInput }> = async (_req, res) => {
   const queued = await ingestEvent(res.locals.ingest);
   res.status(202).json({ data: queued });
+};
+
+/** 202: every event in the batch is queued. */
+export const ingestBatchEvents: Validated<{ batch: IngestInput[] }> = async (_req, res) => {
+  res.status(202).json({ data: await ingestBatch(res.locals.batch) });
 };
 
 export const list: Validated<{ listEvents: ListEventsInput }> = async (_req, res) => {

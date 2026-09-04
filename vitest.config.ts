@@ -11,6 +11,7 @@ export default defineConfig({
       EVENTS_DEFAULT_LIMIT: '50',
       EVENTS_MAX_LIMIT: '500',
       EVENTS_MAX_BUCKETS: '10000',
+      INGEST_BATCH_RATE_LIMIT_PER_MINUTE: '10',
       LOG_LEVEL: 'silent',
     },
   },

@@ -4,6 +4,7 @@ import { config } from '../config';
 import { decodeCursor } from '../lib/cursor';
 import { ValidationError } from '../lib/errors';
 import { EventName } from '../models/event-name';
+import type { WindowGroup } from '../models/event.model';
 import type { IngestInput, ListEventsInput } from '../services/event.service';
 
 /**
@@ -65,6 +66,37 @@ export const validateIngest: Validated<{ ingest: IngestInput }> = (req, res, nex
 };
 
 // ---------------------------------------------------------------------------
+// POST /ingest/batch
+// ---------------------------------------------------------------------------
+
+export const BATCH_MAX_EVENTS = 100;
+
+/** Same as a single ingest, except `timestamp` is required: a batch arrives after the fact, so "now" is not a sensible default. */
+const batchEventSchema = z.object({
+  account_id: z.string().trim().min(1),
+  event_name: z.enum(EventName),
+  timestamp: z
+    .custom<unknown>((value) => value !== undefined, 'is required')
+    .pipe(date)
+    .refine((d) => d <= new Date(), 'must not be in the future'),
+});
+
+/** Every event is checked; any failure rejects the whole batch with one `details` entry per problem (path `events.<index>.<field>`). */
+const ingestBatchSchema: z.ZodType<IngestInput[]> = z
+  .object({
+    events: z
+      .array(batchEventSchema)
+      .min(1, 'must contain at least one event')
+      .max(BATCH_MAX_EVENTS, `must contain at most ${BATCH_MAX_EVENTS} events`),
+  })
+  .transform((body) => body.events.map((e) => ({ accountId: e.account_id, eventName: e.event_name, timestamp: e.timestamp })));
+
+export const validateIngestBatch: Validated<{ batch: IngestInput[] }> = (req, res, next) => {
+  res.locals.batch = parse(ingestBatchSchema, req.body);
+  next();
+};
+
+// ---------------------------------------------------------------------------
 // GET /events
 // ---------------------------------------------------------------------------
 
@@ -92,6 +124,12 @@ const listEventsSchema: z.ZodType<ListEventsInput> = z
       from: date.optional(),
       to: date.optional(),
       window: window.optional(),
+      group_by: z
+        .string()
+        .transform((raw) => raw.split(',').map((g) => g.trim()).filter(Boolean))
+        .pipe(z.array(z.enum(['account', 'event'])).min(1))
+        .transform((groups): WindowGroup[] => [...new Set(groups)])
+        .optional(),
       limit,
       offset,
       cursor: z
@@ -106,6 +144,7 @@ const listEventsSchema: z.ZodType<ListEventsInput> = z
   )
   .refine((q) => !(q.cursor && q.offset), { path: ['offset'], message: 'cannot be combined with cursor' })
   .refine((q) => !(q.cursor && q.window), { path: ['cursor'], message: 'cannot be combined with window; page buckets with offset' })
+  .refine((q) => !(q.group_by && !q.window), { path: ['group_by'], message: 'requires window' })
   .refine((q) => !q.from || !q.to || q.from <= q.to, { path: ['from'], message: 'must be before or equal to to' })
   .refine((q) => !q.window || !q.from || !q.to || bucketCount(q.from, q.to, q.window.seconds) <= config.eventsMaxBuckets, {
     path: ['window'],

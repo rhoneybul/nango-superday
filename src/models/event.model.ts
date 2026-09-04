@@ -61,19 +61,32 @@ export async function countEvents(where: EventWhere): Promise<number> {
 
 export interface WindowBucket {
   windowStart: Date;
+  /** Present when the query grouped by account / event. */
+  account?: string;
+  event?: string;
   count: number;
 }
+
+export type WindowGroup = 'account' | 'event';
 
 /** Bucket alignment origin: 1970-01-05 00:00 UTC, a Monday, so 1w buckets start on Mondays and 1h/1d stay on the hour/midnight UTC. */
 export const BUCKET_ORIGIN_MS = Date.UTC(1970, 0, 5);
 
+const GROUP_COLUMN: Record<WindowGroup, Prisma.Sql> = { account: Prisma.sql`account_id`, event: Prisma.sql`event_name` };
+
 /**
  * Counts events grouped into fixed-size time buckets of `windowSeconds`,
- * aligned to BUCKET_ORIGIN_MS via Postgres `date_bin`. Only buckets with
- * events come back (the service fills the gaps); at most `maxBuckets` rows,
- * which the service treats as "range too wide" when hit.
+ * aligned to BUCKET_ORIGIN_MS via Postgres `date_bin`, optionally further
+ * grouped by account and/or event name. Only buckets with events come back
+ * (the service fills the gaps); at most `maxRows` rows, which the service
+ * treats as "range too wide" when hit.
  */
-export async function countEventsByWindow(where: EventWhere, windowSeconds: number, maxBuckets: number): Promise<WindowBucket[]> {
+export async function countEventsByWindow(
+  where: EventWhere,
+  windowSeconds: number,
+  maxRows: number,
+  groupBy: WindowGroup[] = [],
+): Promise<WindowBucket[]> {
   const conditions: Prisma.Sql[] = [];
   if (where.accountId) conditions.push(Prisma.sql`account_id = ${where.accountId}`);
   if (where.eventName) conditions.push(Prisma.sql`event_name = ${where.eventName}`);
@@ -82,14 +95,22 @@ export async function countEventsByWindow(where: EventWhere, windowSeconds: numb
   const whereSql = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
   const interval = `${windowSeconds} seconds`;
-  const rows = await prisma.$queryRaw<{ window_start: Date; count: bigint }[]>`
+  const keys = Prisma.join([Prisma.sql`window_start`, ...groupBy.map((g) => GROUP_COLUMN[g])], ', ');
+  const rows = await prisma.$queryRaw<{ window_start: Date; account_id?: string; event_name?: string; count: bigint }[]>`
     SELECT date_bin(${interval}::interval, "timestamp", TIMESTAMPTZ '1970-01-05 00:00:00+00') AS window_start,
+           ${groupBy.includes('account') ? Prisma.sql`account_id,` : Prisma.empty}
+           ${groupBy.includes('event') ? Prisma.sql`event_name,` : Prisma.empty}
            COUNT(*)::bigint AS count
     FROM events
     ${whereSql}
-    GROUP BY window_start
-    ORDER BY window_start ASC
-    LIMIT ${maxBuckets}
+    GROUP BY ${keys}
+    ORDER BY ${keys}
+    LIMIT ${maxRows}
   `;
-  return rows.map((r) => ({ windowStart: r.window_start, count: Number(r.count) }));
+  return rows.map((r) => ({
+    windowStart: r.window_start,
+    ...(r.account_id !== undefined && { account: r.account_id }),
+    ...(r.event_name !== undefined && { event: r.event_name }),
+    count: Number(r.count),
+  }));
 }

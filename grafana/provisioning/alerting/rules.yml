@@ -41,3 +41,34 @@ groups:
               expression: A
               conditions:
                 - evaluator: { type: lt, params: [60] }
+
+      # Same shape for POST /ingest/batch, which is limited per account (10 batches/min) rather than
+      # per account+event. The API records batch rejections in ingest_batch_rate_limited_last_seen_timestamp_seconds.
+      - uid: ingest-batch-rate-limit
+        title: BatchRateLimitExceeded
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        labels:
+          severity: warning
+        annotations:
+          summary: 'Account {{ $labels.account_id }} is over its batch ingest limit: its POST /ingest/batch requests are being rejected with 429 (whole batches, nothing queued).'
+          resolved: 'Account {{ $labels.account_id }} is back under its batch ingest limit: no rejected batches for a minute.'
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange: { from: 60, to: 0 }
+            model:
+              refId: A
+              instant: true
+              # seconds since the last rejected batch, per account (max across API instances)
+              expr: time() - max by (account_id) (ingest_batch_rate_limited_last_seen_timestamp_seconds)
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator: { type: lt, params: [60] }
