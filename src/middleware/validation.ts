@@ -32,13 +32,28 @@ const date = z.preprocess(
 );
 const pastDate = date.refine((d) => d <= new Date(), 'must not be in the future');
 
-/** One event as the client sends it. */
+const METADATA_MAX_BYTES = 4096;
+
+/** One metered event as the client sends it. */
 const eventSchema = z.object({
   account_id: z.string().trim().min(1),
   event_name: z.enum(EventName),
+  /** Units of usage this event represents, e.g. records synced. Default 1. */
+  quantity: z.number().int().positive().default(1),
+  /** Free-form context kept with the event for billing (connection id, provider, model, …). */
+  metadata: z
+    .record(z.string(), z.unknown())
+    .refine((m) => JSON.stringify(m).length <= METADATA_MAX_BYTES, `must be at most ${METADATA_MAX_BYTES} bytes as JSON`)
+    .optional(),
   timestamp: pastDate.optional(),
 });
-const toInput = (e: z.infer<typeof eventSchema>): IngestInput => ({ accountId: e.account_id, eventName: e.event_name, timestamp: e.timestamp });
+const toInput = (e: z.infer<typeof eventSchema>): IngestInput => ({
+  accountId: e.account_id,
+  eventName: e.event_name,
+  quantity: e.quantity,
+  metadata: e.metadata,
+  timestamp: e.timestamp,
+});
 
 // ---------------------------------------------------------------------------
 // POST /ingest

@@ -1,16 +1,15 @@
 import { z } from 'zod';
 import { EventName } from '../models/event-name';
+import type { NewEvent } from '../models/event.model';
 
-/** One JSON message per event; the contract between the API (publisher) and the consumer. */
-export interface EventMessage {
-  accountId: string;
-  eventName: EventName;
-  timestamp: Date;
-}
+/** One JSON message per event, exactly what the consumer stores; the contract between the API (publisher) and the consumer. */
+export type EventMessage = NewEvent;
 
 const schema: z.ZodType<EventMessage, unknown> = z.object({
   accountId: z.string().min(1),
   eventName: z.enum(EventName),
+  quantity: z.number().int().positive(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
   timestamp: z.coerce.date(),
 });
 

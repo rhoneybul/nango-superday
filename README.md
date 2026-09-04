@@ -1,192 +1,163 @@
 # nango-events
 
-Barebones event ingestion API: Express 5 + RabbitMQ + Prisma 7 + Postgres.
+A metering API: customers post events, the API queues them, a consumer stores them, and you can query counts back out.
+Express 5, RabbitMQ, Postgres (Prisma), Redis, Prometheus and Grafana.
 
 ```
-POST /ingest ─▶ API ─publish─▶ RabbitMQ `events` ─▶ consumer ─insert─▶ Postgres ◀─ GET /events
-                202                    │ bad message / 5 failed deliveries
-                                       ▼
-                                  `events.dlq`
+POST /ingest ──▶ API ──publish──▶ RabbitMQ ──▶ consumer ──insert──▶ Postgres ◀── GET /events
+                 202
 ```
 
-## Run with Docker
+## Run
 
 ```bash
 docker compose up --build
 ```
 
-Starts Postgres on `:5432`, Redis on `:6379`, RabbitMQ on `:5672` (management UI `:15672`, `nango`/`nango`), Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources), the API on `:3000` and the consumer. Migrations are applied and the [accounts](#accounts) seeded automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `RABBITMQ_PORT`, `RABBITMQ_MANAGEMENT_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`. `--scale consumer=3` runs more consumers.
-For Slack alerts, put a Slack bot token in `.env` as `SLACK_BOT_TOKEN` before starting. The bot needs the `chat:write` scope and must be invited to `#superday-rob` (see [Alerting](#alerting)).
+| Service    | Where                                   |
+|------------|-----------------------------------------|
+| API        | `localhost:3000`                        |
+| Grafana    | `localhost:3001` (admin / admin)        |
+| RabbitMQ   | `localhost:15672` (nango / nango)       |
+| Prometheus | `localhost:9090`                        |
 
-## Run locally
+Migrations run and accounts are seeded on start. Use `--build` after changing code, otherwise Docker reuses the old image.
+For Slack alerts, put a bot token in `.env` as `SLACK_BOT_TOKEN` (scope `chat:write`, bot invited to `#superday-rob`).
+
+To run the API on the host instead:
 
 ```bash
-cp .env.example .env         # DATABASE_URL points at the compose Postgres by default
-docker compose up -d db rabbitmq
-npm install                  # also runs `prisma generate`
-npx prisma migrate deploy
-npm run seed                 # upsert the seeded accounts (src/models/seeded-accounts.ts)
-npm run dev                  # the API
-npm run dev:consumer         # the consumer, in another terminal
+cp .env.example .env
+docker compose up -d db rabbitmq redis
+npm install && npx prisma migrate deploy && npm run seed
+npm run dev              # API
+npm run dev:consumer     # consumer, second terminal
 ```
 
 ## Accounts
 
-Events belong to accounts (customers), and the API only accepts events for accounts it knows. The list of ids
-lives in `src/models/seeded-accounts.ts` and `npm run seed` upserts it into the `accounts` table (compose does
-this on every start, so re-running is safe): `acc_acme`, `acc_globex`, `acc_initech`, `acc_umbrella`, `acc_hooli`.
-
-`POST /ingest` and the `account` filter on `GET /events` answer `404 { "error": "Account acc_x not found" }` for
-anything else; `POST /ingest/batch` lists the offending events in a `400`. The check is a primary-key lookup and
-runs before the rate limiter, so unknown ids never consume quota. To onboard an account, add its id to the list
-and re-run the seed.
+Events belong to accounts (customers). The API only accepts the ids listed in `src/models/seeded-accounts.ts`:
+`acc_acme`, `acc_globex`, `acc_initech`, `acc_umbrella`, `acc_hooli`. Anything else is `404 Account acc_x not found`.
+To add one, add the id to the list and run `npm run seed`.
 
 ## Endpoints
 
-### `POST /ingest`
+### `POST /ingest` → 202
 
 ```json
-{ "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:15:00Z" }
+{ "account_id": "acc_acme", "event_name": "records_synced", "quantity": 250,
+  "metadata": { "connection_id": "conn_42", "provider": "hubspot", "model": "Contact" },
+  "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
-`account_id` must be a seeded [account](#accounts) (`404` otherwise). `event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to the time the API received the event; it may not be in the future.
+| Field        | Meaning                                                                                              |
+|--------------|------------------------------------------------------------------------------------------------------|
+| `event_name` | What was metered: `api_request`, `sync_run`, `records_synced`, `action_executed`, `webhook_received`, `connection_created` |
+| `quantity`   | Units of usage the event represents (records synced, requests, …). Integer ≥ 1, default 1. Billing sums it |
+| `metadata`   | Optional object with anything billing or debugging needs (connection id, provider, model, …). Up to 4 KB |
+| `timestamp`  | Optional, defaults to now, may not be in the future                                                 |
 
-Returns `202` with the event as queued (`{ "data": { "accountId", "eventName", "timestamp" } }`): the API publishes it to RabbitMQ and the consumer inserts it into Postgres a moment later. See [Queue](#queue).
+The event is published to the queue and stored by the consumer a moment later; the response echoes what was queued.
 
-Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. The account check runs before the limiter, so unknown accounts never consume quota. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
-
-### `POST /ingest/batch`
+### `POST /ingest/batch` → 202
 
 ```json
-{ "events": [
-  { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:00:00Z" },
-  { "account_id": "acc_1", "event_name": "login",  "timestamp": "2026-09-01T10:05:00Z" }
-] }
+{ "events": [ { "account_id": "acc_acme", "event_name": "sync_run", "timestamp": "2026-09-01T10:00:00Z", "metadata": { "connection_id": "conn_42" } },
+              { "account_id": "acc_acme", "event_name": "records_synced", "quantity": 1200, "timestamp": "2026-09-01T10:00:05Z" } ] }
 ```
 
-Up to 100 events in one request. Each is validated like a single ingest, except `timestamp` is required (a batch arrives after the fact, so "now" is not a sensible default). Any problem rejects the whole batch: `400 { "error", "details": [{ "path": "events.<index>.<field>", "message" }] }` with one entry per problem, including unknown accounts (`Account acc_x not found`). A valid batch is published to the queue event by event and answers `202 { "data": { "queued": n } }`.
+1 to 100 events, each with a required `timestamp`. The batch is accepted or rejected as a whole: any problem returns
+`400` with one `details` entry per problem (`events.<index>.<field>`), including unknown accounts.
+Response: `{ "data": { "queued": n } }`.
 
-Batches have their own limit: `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` (default 10) batches per minute for each account a batch contains, so an account can push up to 1000 events a minute this way. Over the limit the whole batch is rejected with `429 { "error": "Too many requests", "details": [{ "account", "limit" }] }` and nothing is queued. Rejections are counted in `ingest_batch_rate_limited_total{account_id}` and raise the separate `BatchRateLimitExceeded` alert (see [Alerting](#alerting)).
+### `GET /events` → 200
 
-### `GET /events`
-
-| Param     | Description                                                                 |
+| Param     | Meaning                                                                     |
 |-----------|-----------------------------------------------------------------------------|
-| `account` | Filter by account id (must be a seeded account, `404` otherwise)            |
-| `event`   | Filter by event name (must be a known `EventName`)                          |
-| `from`    | Inclusive lower bound on `timestamp` (ISO-8601 or epoch ms)                 |
-| `to`      | Inclusive upper bound on `timestamp` (ISO-8601 or epoch ms)                 |
-| `window`  | Aggregation bucket size: `minute`, `hour`, `day`, or `30s`, `15m`, `1h`, `1d`, `1w`. Switches to aggregated mode; requires `from` and `to` |
-| `limit`   | Page size (default `EVENTS_DEFAULT_LIMIT`, max `EVENTS_MAX_LIMIT`)          |
-| `offset`  | Page offset                                                                 |
+| `account` | Filter by account id                                                        |
+| `event`   | Filter by event name                                                        |
+| `from`, `to` | Inclusive time range (ISO-8601 or epoch ms)                              |
+| `window`  | Bucket size: `minute`, `hour`, `day`, or `15m`, `6h`, `1w`. Requires `from` and `to` |
+| `limit`, `offset` | Paging (default 100 per page, max 1000)                             |
 
-Without `window` the response is the raw events, newest first:
+Without `window`: raw events, newest first.
 
 ```json
-{ "data": [...], "meta": { "total": 2, "limit": 100, "offset": 0 }, "filters": { "account": "acc_1" } }
+{ "data": [ … ], "meta": { "total": 2, "limit": 100, "offset": 0 }, "filters": { "account": "acc_acme" } }
 ```
 
-With `window` the response is a count per bucket, oldest first. Buckets are aligned to the clock (a `1h`
-bucket starts on the hour, `1d` at 00:00 UTC, `1w` on a Monday) and every bucket in `from`..`to` is present,
-so a 24h range at `window=1h` is exactly 24 values, empty ones as `0`.
-Buckets are paged with `limit`/`offset`; `meta.total` is the number of buckets in the range. A query that
-would produce more than `EVENTS_MAX_BUCKETS` (10000) buckets is a `400`.
-
-
-```bash
-curl 'localhost:3000/events?account=acc_acme&window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z'
-```
+With `window`: one row per bucket, oldest first, with `count` (events) and `quantity` (billable usage, the sum of the
+events' `quantity`). Buckets align to the clock (an hour bucket starts on the hour) and every bucket in the range is
+present, so 24 hours at `window=1h` is exactly 24 values, empty ones as `0`.
+More than 10,000 buckets is a `400`.
 
 ```json
 { "window": "1h", "windowSeconds": 3600,
-  "buckets": [{ "windowStart": "2026-09-01T00:00:00.000Z", "count": 0 }, { "windowStart": "2026-09-01T01:00:00.000Z", "count": 2 }, "…22 more"],
-  "meta": { "total": 24, "limit": 100, "offset": 0 },
-  "filters": { "account": "acc_acme", "from": "2026-09-01T00:00:00.000Z", "to": "2026-09-02T00:00:00.000Z" } }
+  "buckets": [ { "windowStart": "2026-09-01T00:00:00.000Z", "count": 0, "quantity": 0 }, { "windowStart": "2026-09-01T01:00:00.000Z", "count": 2, "quantity": 1450 }, … ],
+  "meta": { "total": 24, "limit": 100, "offset": 0 }, "filters": { … } }
 ```
 
-### `GET /metrics`
+### Errors
 
-Includes `http_requests_total` and `http_request_duration_seconds` (labels `method`, `route`, `status`) for every request, plus the rate-limit metrics below.
+`400 { "error", "details" }` for bad input, `404` for an unknown account, `429` when rate limited, `500` for anything else.
+Every response carries an `X-Request-Id` header; the same id is on every log line for that request.
 
-Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (single-ingest rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest one), `ingest_batch_rate_limited_total{account_id}` and `ingest_batch_rate_limited_last_seen_timestamp_seconds{account_id}` (the same for batch rejections), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
+## Rate limits
 
-Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`; an unknown account returns `404 { "error": "Account acc_x not found" }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
+| Endpoint             | Limit                                          | Setting                              |
+|----------------------|------------------------------------------------|--------------------------------------|
+| `POST /ingest`       | 100 per minute per account + event name        | `INGEST_RATE_LIMIT_PER_MINUTE`       |
+| `POST /ingest/batch` | 10 batches per minute per account in the batch | `INGEST_BATCH_RATE_LIMIT_PER_MINUTE` |
+
+Over the limit: `429 { "error": "Too many requests" }`. Keying single ingest on account + event means a noisy event
+never blocks a customer's other events, and every customer stays well under the system's 100 events/s.
+Counters live in Redis so the limit holds across API replicas. Unknown accounts are rejected before the limiter and use no quota.
+
+To trigger it: send 101 events for one account and event within a minute, for example
+
+```bash
+for i in $(seq 1 101); do curl -s -o /dev/null -w "%{http_code} " -X POST localhost:3000/ingest \
+  -H 'content-type: application/json' -d '{"account_id":"acc_umbrella","event_name":"webhook_received"}'; done
+```
+
+## Alerts
+
+The API never talks to Slack. Each 429 is counted in a Prometheus metric on `GET /metrics`; Prometheus scrapes it every
+10 s; a Grafana alert rule fires while an account (or account + event) has been rejected in the last minute and resolves
+after a minute without a rejection; Grafana's Alertmanager sends one Slack message per firing and one on resolve.
+
+Two rules, `RateLimitExceeded` (single ingest) and `BatchRateLimitExceeded` (batches), live in
+`grafana/provisioning/alerting/rules.yml`; the Slack contact point and grouping are in the same folder.
+
+> 🚨 RateLimitExceeded — Account acc_acme is over its connection_created ingest limit: its connection_created events are being rejected with 429.
+>
+> ✅ Resolved: RateLimitExceeded — Account acc_acme is back under its connection_created ingest limit: no rejections for a minute.
 
 ## Queue
 
-`POST /ingest` publishes each event as a JSON message to the `events` exchange (confirmed by the broker before the `202`); `src/consumer.ts` reads the `events` queue and inserts rows, acknowledging each message after its insert. The topology (`src/queue/topology.ts`) is asserted by both on connect, so a fresh broker needs no setup, and both reconnect on their own if the broker restarts.
+`POST /ingest` publishes to the `events` queue and only answers 202 once the broker has stored the message. The consumer
+(`src/consumer.ts`) inserts each event into Postgres and acknowledges it. A message that cannot be decoded goes straight
+to the `events.dlq` dead-letter queue; one whose insert fails is retried up to 5 times, then dead-lettered. Both sides
+reconnect on their own if the broker restarts. Run more consumers with `docker compose up -d --scale consumer=3`.
 
-Dead-letter queue: a message the consumer cannot decode is rejected and goes straight to `events.dlq`. A message whose insert fails (Postgres down, …) is requeued and redelivered; after 5 deliveries the broker moves it to `events.dlq` itself. Inspect dead-lettered messages in the management UI (`:15672` → Queues → `events.dlq`); once the cause is fixed, use its *Move messages* section (shovel plugin) to put them back on the `events` queue, or purge them. The **Event Queue** Grafana dashboard shows the depth of both queues, messages in flight, consumers attached and message rates (from RabbitMQ's Prometheus plugin).
+## Dashboards
 
-## Alerting
-
-Event driven, no database involved: the rate limiter records each 429 it sends as a metric, Prometheus scrapes it, and [Grafana alerting](https://grafana.com/docs/grafana/latest/alerting/) does the rest. Everything on the Grafana side is provisioned from `grafana/provisioning/alerting/` and also editable in the UI under Alerting:
-
-- `rules.yml` — the alert rules. `BatchRateLimitExceeded` does the same for `POST /ingest/batch` from `ingest_batch_rate_limited_last_seen_timestamp_seconds`, per `account_id` (batches are limited per account, not per event). `RateLimitExceeded` evaluates `time() - ingest_rate_limited_last_seen_timestamp_seconds < 60` every 10s: an `account_id` + `event_name` pair is alerting while its latest rejection is under a minute old, and resolves after a minute without one. One alert instance per pair.
-- `contact-points.yml` — where alerts go. Slack `#superday-rob` (bot token from `SLACK_BOT_TOKEN`, channel set by `recipient`) is the only one; add a `webhook`, `pagerduty`, `email`, … receiver to the same contact point to fan every alert out to another consumer.
-- `notification-policies.yml` — grouping (one notification per pair) and routing. Add a route with matchers to send only some alerts to another contact point.
-
-Grafana handles state, deduplication and delivery. On firing, Slack gets:
-
-> :rotating_light: RateLimitExceeded — Account acc_1 is over its signup ingest limit: its signup events are being rejected with 429.
-
-Once the pair has gone a minute without a rejection the same contact points get:
-
-> :white_check_mark: Resolved: RateLimitExceeded — Account acc_1 is back under its signup ingest limit: no rejections for a minute.
-
-The batch rule reads the same way: `BatchRateLimitExceeded — Account acc_1 is over its batch ingest limit: its POST /ingest/batch requests are being rejected with 429 (whole batches, nothing queued)`, resolving after a minute without a rejected batch.
-
-Adding an alert: record a metric in `src/lib/metrics.ts` at the point where the thing happens, then add a rule to `rules.yml` with a Prometheus query, a threshold, and `summary`/`resolved` annotations (one plain, actionable line each).
+Grafana comes with three: **Events** (counts over time from Postgres), **API HTTP** (requests, latency, errors, rate-limit
+hits) and **Event Queue** (queue depth, consumers, message rates). Source: `grafana/provisioning/dashboards/`.
 
 ## Load testing
 
 ```bash
-npm run load                          # load/example.json
-LOAD_CONFIG=my-run.json npm run load  # any file inside load/
+npm run load               # load/example.json: mixed streams, some over the limit
+npm run load:throughput    # load/throughput.json: 100 events/s for 60 s (lift the limit first, see load/README.md)
 ```
 
-Runs [k6](https://grafana.com/docs/k6/latest/) via Docker Compose against the API, one fixed-rate stream per
-`{ account_id, event_name, rps }` entry in the JSON config, for a configurable duration, and prints throughput,
-status-code counts and p50/p95/p99 latency. See [load/README.md](load/README.md) for the config format and how
-to read the report. The default example uses the seeded accounts and mixes streams that stay under the ingest
-rate limit with ones that trip it, plus one unknown account that is answered with `404`.
-
-## Layout
-
-```
-src/
-  config/        settings read from env (single source of truth)
-  routes.ts      URL → validation middleware → controller wiring
-  middleware/    request id, request logging, input validation (zod), account check (404), rate limiting
-  controllers/   HTTP concerns: status codes, response shape
-  services/      business logic on validated input: ingest publishes to the queue, listing queries the model
-  models/        Prisma data access (events, accounts tables), the seeded account list
-  queue/         RabbitMQ topology (exchange, queue, dead-letter queue), message codec, the API's publisher
-  consumer.ts    the consumer service: queue → Postgres
-  lib/           prisma client, Redis client + rate-limit store, HttpError/handler, pino logger, Prometheus metrics registry
-  generated/     Prisma client output (gitignored, created by `prisma generate`)
-  seed.ts        upserts the seeded accounts (`npm run seed`; run by compose on start)
-prisma/          schema + migrations
-rabbitmq/        broker config mounted by compose (enabled plugins, per-queue Prometheus metrics)
-prometheus/      scrape config (the API's /metrics, RabbitMQ)
-grafana/         Grafana provisioning: datasources (Postgres, Prometheus); alert rules, contact points, notification policies
-load/            k6 load generator: publish.js + JSON run configs (see load/README.md)
-test/            vitest + supertest against the real app, model module mocked with vi.mock
-```
-
-Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timestamp)`, `(event_name, timestamp)`.
-
-## Dashboards
-
-Grafana (`:3001`) comes with three provisioned dashboards: **Event Queue** (queue and dead-letter queue depth, in-flight messages, consumers, message rates), **API HTTP** (requests/s, latency, error rate, rate-limit hits, from Prometheus) and **Events** (events over time, by name, top accounts, latest events, straight from Postgres). Source: `grafana/provisioning/dashboards/*.json`.
+Prints successful / rate limited / failed counts and p50/p95/p99 latency. Config format in [load/README.md](load/README.md).
 
 ## Postman
 
-Import `postman/nango-events.postman_collection.json` (variables `baseUrl`, `accountId`). Folders: **Ingest** (three
-successful single events), **Batch** (three successful batches and one that is rejected with every error listed),
-**Invalid ingestion** (bad event name, bad data, unknown partner id), **Query** (events by account / event / time range,
-a window of hourly counts, and the same grouped by account and event) and **Rate limit** (two requests to run repeatedly
-with the Collection Runner to trigger 429s and the Slack alerts). Every request asserts its expected status.
+`postman/nango-events.postman_collection.json`: successful ingests and batches, the invalid cases, queries (raw and windowed)
+and the two rate-limit requests to run repeatedly. Set `baseUrl` if the API is not on `localhost:3000`.
 
 ## Tests
 
@@ -194,4 +165,22 @@ with the Collection Runner to trigger 429s and the Slack alerts). Every request 
 npm test
 ```
 
-No database, Redis or RabbitMQ required — the model layer (events, accounts) and the queue publisher are stubbed,  `test/consumer.test.ts` calls the consumer's message handler with a fake channel.
+No database, Redis or RabbitMQ needed: the models and the queue publisher are mocked.
+
+## Layout
+
+```
+src/
+  config/        settings from env (the only place that reads process.env)
+  routes.ts      every route: validate → check account → rate limit → controller
+  middleware/    request id, request log + HTTP metrics, validation (zod), account check, rate limits
+  controllers/   status codes and response shape
+  services/      business logic: publish to the queue, list or bucket events
+  models/        Prisma access to events and accounts, the seeded account ids, the metered event names
+  queue/         RabbitMQ topology, message format, publisher
+  consumer.ts    queue → Postgres
+  lib/           Prisma client, Redis client, rate-limit store, HttpError, logger, metrics
+prisma/          schema + migrations
+grafana/ prometheus/ rabbitmq/   provisioning and config for the observability stack
+load/  postman/  test/            k6 scripts, Postman collection, vitest suite
+```

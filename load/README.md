@@ -36,8 +36,8 @@ npm run load:local
   "target": "http://localhost:3000",
   "duration": "60s",
   "events": [
-    { "account_id": "acc_acme", "event_name": "signup", "rps": 1 },
-    { "account_id": "acc_globex", "event_name": "purchase", "rps": 5, "maxVUs": 50 }
+    { "account_id": "acc_acme", "event_name": "connection_created", "rps": 1 },
+    { "account_id": "acc_globex", "event_name": "sync_run", "rps": 5, "maxVUs": 50 }
   ],
   "expectedStatuses": [202, 429],
   "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
@@ -97,7 +97,7 @@ The full k6 data (every built-in metric, per-scenario tags) is still written to 
 
 Every `account_id` must be one of the seeded accounts (`acc_acme`, `acc_globex`, `acc_initech`,
 `acc_umbrella`, `acc_hooli`; see `src/models/seeded-accounts.ts`). The API looks each one up in its
-Redis cache and answers `404` for anything else, so the cache is exercised on every request.
+The API checks every `account_id` against the seeded accounts and answers `404` for anything else.
 
 `POST /ingest` allows `INGEST_RATE_LIMIT_PER_MINUTE` (100 by default) requests per minute for each
 `account_id` + `event_name` pair, so a stream at or below roughly 1.6 rps is always stored, and a faster
@@ -105,11 +105,11 @@ stream gets `429` for the rest of each minute once it has used its 100. In `exam
 
 | Stream                      | rps | Requests in 60s | Stored | Rate limited | Unknown account |
 |-----------------------------|-----|-----------------|--------|--------------|-----------------|
-| `acc_acme` / `signup`       | 1   | 60              | 60     | 0            | 0               |
-| `acc_acme` / `login`        | 1.5 | 90              | 90     | 0            | 0               |
-| `acc_globex` / `purchase`   | 5   | 300             | ~100   | ~200         | 0               |
-| `acc_initech` / `login`     | 10  | 600             | ~100   | ~500         | 0               |
-| `acc_unknown` / `signup`    | 0.5 | 30              | 0      | 0            | 30 (`404`)      |
+| `acc_acme` / `connection_created`       | 1   | 60              | 60     | 0            | 0               |
+| `acc_acme` / `api_request`        | 1.5 | 90              | 90     | 0            | 0               |
+| `acc_globex` / `sync_run`   | 5   | 300             | ~100   | ~200         | 0               |
+| `acc_initech` / `api_request`     | 10  | 600             | ~100   | ~500         | 0               |
+| `acc_unknown` / `connection_created`    | 0.5 | 30              | 0      | 0            | 30 (`404`)      |
 
 `expectedStatuses` includes `429` and `404` there so the error-rate threshold only trips on real failures.
 The `accepted` / `rate limited` / `unknown account` lines in the summary show the split.

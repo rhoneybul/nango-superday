@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "nango-events",
-    "description": "Metering API. Ingest single events or batches (queued, 202), see them rejected when invalid, and query them raw or aggregated. Set `baseUrl` if the API is not on localhost:3000; `accountId` must be a seeded account (acc_acme, acc_globex, acc_initech, acc_umbrella, acc_hooli).",
+    "description": "Metering API. Ingest single events or batches (queued, 202), see them rejected when invalid, and query them raw or aggregated per time bucket. Events carry a quantity (units of usage) and optional metadata for billing. Set `baseUrl` if the API is not on localhost:3000; `accountId` must be a seeded account (acc_acme, acc_globex, acc_initech, acc_umbrella, acc_hooli).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -20,7 +20,7 @@
       "description": "POST /ingest: one event. Answers 202 once the event is on the queue; the consumer writes it to Postgres a moment later.",
       "item": [
         {
-          "name": "Signup (timestamp defaults to now)",
+          "name": "Connection created (timestamp defaults to now)",
           "event": [
             {
               "listen": "test",
@@ -28,7 +28,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"queued with a server timestamp\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"signup\"); pm.expect(d.timestamp).to.be.a(\"string\"); });"
+                  "pm.test(\"queued with quantity 1 and the metadata\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"connection_created\"); pm.expect(d.quantity).to.eql(1); pm.expect(d.metadata.provider).to.eql(\"hubspot\"); });"
                 ]
               }
             }
@@ -52,13 +52,13 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"signup\"\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"connection_created\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"provider\": \"hubspot\"\n  }\n}"
             },
             "description": ""
           }
         },
         {
-          "name": "Purchase (explicit timestamp)",
+          "name": "Records synced (quantity = 250 records)",
           "event": [
             {
               "listen": "test",
@@ -66,7 +66,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"keeps the supplied timestamp\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
+                  "pm.test(\"250 units of usage\", () => pm.expect(pm.response.json().data.quantity).to.eql(250));"
                 ]
               }
             }
@@ -90,13 +90,13 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"purchase\",\n  \"timestamp\": \"2026-09-01T10:15:00Z\"\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"records_synced\",\n  \"quantity\": 250,\n  \"timestamp\": \"2026-09-01T10:15:00Z\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"provider\": \"hubspot\",\n    \"model\": \"Contact\",\n    \"sync\": \"contacts\"\n  }\n}"
             },
             "description": ""
           }
         },
         {
-          "name": "Login (epoch milliseconds timestamp)",
+          "name": "API request (epoch milliseconds timestamp)",
           "event": [
             {
               "listen": "test",
@@ -128,7 +128,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"login\",\n  \"timestamp\": 1788257700000\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"timestamp\": 1788257700000,\n  \"metadata\": {\n    \"provider\": \"salesforce\",\n    \"endpoint\": \"/services/data/v60.0/query\"\n  }\n}"
             },
             "description": ""
           }
@@ -140,7 +140,7 @@
       "description": "POST /ingest/batch: up to 100 events in one request, each with a required timestamp. Accepted or rejected as a whole; 10 batches per account per minute.",
       "item": [
         {
-          "name": "Batch of 3 (one account)",
+          "name": "Batch of 3 (one account, mixed usage)",
           "event": [
             {
               "listen": "test",
@@ -173,7 +173,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"signup\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T10:05:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"purchase\",\n      \"timestamp\": \"2026-09-01T10:10:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\",\n      \"metadata\": {\n        \"connection_id\": \"conn_42\",\n        \"sync\": \"contacts\"\n      }\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"records_synced\",\n      \"quantity\": 1200,\n      \"timestamp\": \"2026-09-01T10:00:05Z\",\n      \"metadata\": {\n        \"connection_id\": \"conn_42\",\n        \"model\": \"Contact\"\n      }\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T10:00:06Z\"\n    }\n  ]\n}"
             },
             "description": ""
           }
@@ -212,7 +212,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_acme\",\n      \"event_name\": \"signup\",\n      \"timestamp\": \"2026-09-01T11:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T11:01:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"purchase\",\n      \"timestamp\": \"2026-09-01T11:02:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"logout\",\n      \"timestamp\": \"2026-09-01T11:03:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_acme\",\n      \"event_name\": \"connection_created\",\n      \"timestamp\": \"2026-09-01T11:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T11:01:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"2026-09-01T11:02:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"webhook_received\",\n      \"timestamp\": \"2026-09-01T11:03:00Z\"\n    }\n  ]\n}"
             },
             "description": "Counts once against each account's batch allowance."
           }
@@ -251,7 +251,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"login\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    }\n  ]\n}"
             },
             "description": ""
           }
@@ -290,7 +290,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"signup\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"page_view\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"login\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"connection_created\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"page_view\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"api_request\"\n    }\n  ]\n}"
             },
             "description": "Nothing from the batch is queued; every problem comes back at once."
           }
@@ -371,7 +371,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"event_name\": \"signup\",\n  \"timestamp\": \"yesterday\"\n}"
+              "raw": "{\n  \"event_name\": \"connection_created\",\n  \"timestamp\": \"yesterday\"\n}"
             },
             "description": ""
           }
@@ -409,9 +409,47 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"acc_unknown\",\n  \"event_name\": \"signup\"\n}"
+              "raw": "{\n  \"account_id\": \"acc_unknown\",\n  \"event_name\": \"connection_created\"\n}"
             },
             "description": "Only seeded accounts are accepted. Checked before the rate limiter, so unknown ids never use quota."
+          }
+        },
+        {
+          "name": "Bad metering fields (quantity 0, metadata not an object)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
+                  "pm.test(\"both fields listed\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"quantity\", \"metadata\"]));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"quantity\": 0,\n  \"metadata\": \"conn_42\"\n}"
+            },
+            "description": ""
           }
         }
       ]
@@ -467,7 +505,7 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                      "pm.test(\"only purchases\", () => pm.response.json().data.forEach(e => pm.expect(e.eventName).to.eql(\"purchase\")));"
+                      "pm.test(\"only sync runs\", () => pm.response.json().data.forEach(e => pm.expect(e.eventName).to.eql(\"sync_run\")));"
                     ]
                   }
                 }
@@ -476,7 +514,7 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/events?account={{accountId}}&event=purchase",
+                  "raw": "{{baseUrl}}/events?account={{accountId}}&event=sync_run",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -490,7 +528,7 @@
                     },
                     {
                       "key": "event",
-                      "value": "purchase"
+                      "value": "sync_run"
                     }
                   ]
                 },
@@ -547,7 +585,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"24 hourly buckets, empty ones as 0\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.meta.total).to.eql(24); pm.expect(b.buckets).to.have.lengthOf(24); });"
+                  "pm.test(\"24 hourly buckets with count and quantity, empty ones as 0\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.meta.total).to.eql(24); b.buckets.forEach(x => pm.expect(x).to.have.keys(\"windowStart\", \"count\", \"quantity\")); });"
                 ]
               }
             }
@@ -624,7 +662,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"logout\"\n}"
+              "raw": "{\n  \"account_id\": \"acc_umbrella\",\n  \"event_name\": \"webhook_received\"\n}"
             },
             "description": "100 per minute per account + event. Uses its own account so it never blocks the other requests."
           }
@@ -662,7 +700,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_initech\",\n      \"event_name\": \"logout\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_initech\",\n      \"event_name\": \"webhook_received\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    }\n  ]\n}"
             },
             "description": "10 batches per account per minute, separate from the single-ingest limit and with its own alert."
           }

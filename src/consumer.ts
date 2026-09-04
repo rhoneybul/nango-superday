@@ -29,7 +29,7 @@ export async function handleMessage(channel: Pick<Channel, 'ack' | 'nack'>, msg:
     return;
   }
   try {
-    await events.createEvent(message.accountId, message.eventName, message.timestamp);
+    await events.createEvent(message);
     channel.ack(msg);
   } catch (err) {
     log.error({ err, message, redelivered: msg.fields.redelivered }, 'insert failed, requeueing');

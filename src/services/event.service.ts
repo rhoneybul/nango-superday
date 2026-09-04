@@ -17,13 +17,17 @@ import { publishEvent } from '../queue/publisher';
 export interface IngestInput {
   accountId: string;
   eventName: EventName;
+  /** Units of usage this event represents (default 1). */
+  quantity: number;
+  /** Free-form context for billing or debugging. */
+  metadata?: Record<string, unknown>;
   /** Omitted → the time the API received the event. */
   timestamp?: Date;
 }
 
 /** Publishes the event to the queue; src/consumer.ts inserts it into Postgres. Returns what was queued. */
 export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
-  const message: EventMessage = { accountId: input.accountId, eventName: input.eventName, timestamp: input.timestamp ?? new Date() };
+  const message: EventMessage = { ...input, timestamp: input.timestamp ?? new Date() };
   await publishEvent(message);
   return message;
 }
@@ -66,7 +70,7 @@ export interface EventListing {
 export interface EventWindowCounts {
   window: string;
   windowSeconds: number;
-  /** One entry per bucket from `from` to `to`, oldest first, empty buckets as 0: a 24h range at 1h is 24 values. */
+  /** One entry per bucket from `from` to `to`, oldest first, empty buckets as 0: a 24h range at 1h is 24 values. `count` is events, `quantity` is billable usage. */
   buckets: WindowBucket[];
   /** `total` is the number of buckets in the range; `buckets` is the page `offset`..`offset + limit`. */
   meta: { total: number; limit: number; offset: number };
@@ -106,10 +110,10 @@ export async function listEvents(input: ListEventsInput): Promise<EventListing |
  */
 function fillEmptyBuckets(counted: WindowBucket[], from: Date, to: Date, windowSeconds: number): WindowBucket[] {
   const windowMs = windowSeconds * 1000;
-  const byStart = new Map(counted.map((b) => [b.windowStart.getTime(), b.count]));
+  const byStart = new Map(counted.map((b) => [b.windowStart.getTime(), b]));
   const firstStart = events.BUCKET_ORIGIN_MS + Math.floor((from.getTime() - events.BUCKET_ORIGIN_MS) / windowMs) * windowMs;
   for (let start = firstStart; start < to.getTime(); start += windowMs) {
-    if (!byStart.has(start)) byStart.set(start, 0);
+    if (!byStart.has(start)) byStart.set(start, { windowStart: new Date(start), count: 0, quantity: 0 });
   }
-  return [...byStart.entries()].sort(([a], [b]) => a - b).map(([start, count]) => ({ windowStart: new Date(start), count }));
+  return [...byStart.values()].sort((a, b) => a.windowStart.getTime() - b.windowStart.getTime());
 }

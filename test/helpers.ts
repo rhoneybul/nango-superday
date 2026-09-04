@@ -18,7 +18,9 @@ export function makeEvent(overrides: Partial<EventRecord> = {}): EventRecord {
   return {
     id: '1',
     accountId: 'acc_1',
-    eventName: 'signup',
+    eventName: 'connection_created',
+    quantity: 1,
+    metadata: null,
     timestamp: new Date('2026-09-01T10:00:00.000Z'),
     createdAt: new Date('2026-09-01T10:00:00.000Z'),
     ...overrides,
@@ -30,9 +32,7 @@ export function makeEvent(overrides: Partial<EventRecord> = {}): EventRecord {
 beforeEach(() => {
   vi.resetAllMocks();
   accounts.accountExists.mockResolvedValue(true);
-  events.createEvent.mockImplementation(async (accountId, eventName, timestamp) =>
-    makeEvent({ accountId, eventName, timestamp: timestamp ?? new Date() }),
-  );
+  events.createEvent.mockImplementation(async (event) => makeEvent({ ...event, metadata: event.metadata ?? null }));
   events.findEvents.mockResolvedValue([]);
   events.countEvents.mockResolvedValue(0);
   events.countEventsByWindow.mockResolvedValue([]);

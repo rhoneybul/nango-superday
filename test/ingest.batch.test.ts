@@ -13,19 +13,19 @@ describe('POST /ingest/batch', () => {
   it('queues every event and answers 202 with the count', async () => {
     const res = await request(app)
       .post('/ingest/batch')
-      .send({ events: [ok('acc_1', 'signup'), ok('acc_1', 'login', '2026-09-01T11:00:00Z'), ok('acc_2', 'purchase')] });
+      .send({ events: [ok('acc_1', 'connection_created'), ok('acc_1', 'api_request', '2026-09-01T11:00:00Z'), ok('acc_2', 'sync_run')] });
 
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ data: { queued: 3 } });
     expect(publisher.publishEvent).toHaveBeenCalledTimes(3);
-    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'login', timestamp: new Date('2026-09-01T11:00:00Z') });
+    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'api_request', quantity: 1, metadata: undefined, timestamp: new Date('2026-09-01T11:00:00Z') });
     expect(events.createEvent).not.toHaveBeenCalled();
   });
 
   it('rejects the whole batch and lists every invalid event, with its index', async () => {
     const res = await request(app)
       .post('/ingest/batch')
-      .send({ events: [ok('acc_1', 'signup'), ok('acc_1', 'page_view'), { account_id: 'acc_1', event_name: 'login' }, ok('', 'signup', '2999-01-01T00:00:00Z')] });
+      .send({ events: [ok('acc_1', 'connection_created'), ok('acc_1', 'page_view'), { account_id: 'acc_1', event_name: 'api_request' }, ok('', 'connection_created', '2999-01-01T00:00:00Z')] });
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual([
@@ -40,8 +40,8 @@ describe('POST /ingest/batch', () => {
   it.each([
     [{}, /events: .*received undefined/],
     [{ events: [] }, /events: must contain at least one event/],
-    [{ events: Array.from({ length: 101 }, () => ok('acc_1', 'signup')) }, /events: must contain at most 100 events/],
-    [[ok('acc_1', 'signup')], /expected object, received array/],
+    [{ events: Array.from({ length: 101 }, () => ok('acc_1', 'connection_created')) }, /events: must contain at most 100 events/],
+    [[ok('acc_1', 'connection_created')], /expected object, received array/],
   ])('rejects a malformed batch %j', async (body, message) => {
     const res = await request(app).post('/ingest/batch').send(body);
     expect(res.status).toBe(400);
@@ -53,7 +53,7 @@ describe('POST /ingest/batch', () => {
     accounts.accountExists.mockImplementation(async (id) => id !== 'acc_nope');
     const res = await request(app)
       .post('/ingest/batch')
-      .send({ events: [ok('acc_nope', 'signup'), ok('acc_ok', 'signup'), ok('acc_nope', 'login')] });
+      .send({ events: [ok('acc_nope', 'connection_created'), ok('acc_ok', 'connection_created'), ok('acc_nope', 'api_request')] });
 
     expect(res.status).toBe(400);
     expect(res.body.details).toEqual([
@@ -65,18 +65,18 @@ describe('POST /ingest/batch', () => {
 
   it('allows 10 batches per account per minute, then rejects with the accounts that are over', async () => {
     for (let i = 0; i < 10; i++) {
-      const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_b', 'logout'), ok('acc_b', 'login')] });
+      const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_b', 'webhook_received'), ok('acc_b', 'api_request')] });
       expect(res.status).toBe(202);
     }
 
-    const over = await request(app).post('/ingest/batch').send({ events: [ok('acc_b', 'purchase')] });
+    const over = await request(app).post('/ingest/batch').send({ events: [ok('acc_b', 'sync_run')] });
     expect(over.status).toBe(429);
     expect(over.body).toEqual({ error: 'Too many requests', details: [{ account: 'acc_b', limit: 10 }] });
     expect(publisher.publishEvent).toHaveBeenCalledTimes(20);
 
     // Another account is unaffected, and single ingests for acc_b are not, either: batches have their own counter.
-    expect((await request(app).post('/ingest/batch').send({ events: [ok('acc_c', 'signup')] })).status).toBe(202);
-    expect((await request(app).post('/ingest').send({ account_id: 'acc_b', event_name: 'logout' })).status).toBe(202);
+    expect((await request(app).post('/ingest/batch').send({ events: [ok('acc_c', 'connection_created')] })).status).toBe(202);
+    expect((await request(app).post('/ingest').send({ account_id: 'acc_b', event_name: 'webhook_received' })).status).toBe(202);
   });
 
   it('records batch rejections in their own metrics, not the single-ingest ones', async () => {
@@ -88,8 +88,8 @@ describe('POST /ingest/batch', () => {
   });
 
   it('counts a mixed batch once against every account it contains', async () => {
-    for (let i = 0; i < 10; i++) await request(app).post('/ingest/batch').send({ events: [ok('acc_m1', 'signup'), ok('acc_m2', 'signup')] });
-    const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_m1', 'signup'), ok('acc_m2', 'signup'), ok('acc_m3', 'signup')] });
+    for (let i = 0; i < 10; i++) await request(app).post('/ingest/batch').send({ events: [ok('acc_m1', 'connection_created'), ok('acc_m2', 'connection_created')] });
+    const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_m1', 'connection_created'), ok('acc_m2', 'connection_created'), ok('acc_m3', 'connection_created')] });
     expect(res.status).toBe(429);
     expect(res.body.details).toEqual([
       { account: 'acc_m1', limit: 10 },

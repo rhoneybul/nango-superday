@@ -19,7 +19,7 @@ describe('GET /events', () => {
 
       expect(res.status).toBe(200);
       expect(res.body.data).toHaveLength(2);
-      expect(res.body.data[0]).toMatchObject({ id: '2', accountId: 'acc_1', eventName: 'signup', timestamp: '2026-09-01T10:00:00.000Z' });
+      expect(res.body.data[0]).toMatchObject({ id: '2', accountId: 'acc_1', eventName: 'connection_created', timestamp: '2026-09-01T10:00:00.000Z' });
       expect(res.body.meta).toEqual({ total: 2, limit: 50, offset: 0 });
       expect(res.body.filters).toEqual({});
       expect(events.findEvents).toHaveBeenCalledWith({}, 50, 0);
@@ -52,15 +52,15 @@ describe('GET /events', () => {
 
   describe('event filter', () => {
     it('passes event through as eventName', async () => {
-      const res = await request(app).get('/events').query({ event: 'purchase' });
+      const res = await request(app).get('/events').query({ event: 'sync_run' });
       expect(res.status).toBe(200);
-      expect(res.body.filters).toEqual({ event: 'purchase' });
-      expect(events.findEvents).toHaveBeenCalledWith({ eventName: 'purchase' }, 50, 0);
+      expect(res.body.filters).toEqual({ event: 'sync_run' });
+      expect(events.findEvents).toHaveBeenCalledWith({ eventName: 'sync_run' }, 50, 0);
     });
 
     it('combines account and event', async () => {
-      await request(app).get('/events').query({ account: 'acc_1', event: 'purchase' });
-      expect(events.findEvents).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'purchase' }, 50, 0);
+      await request(app).get('/events').query({ account: 'acc_1', event: 'sync_run' });
+      expect(events.findEvents).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'sync_run' }, 50, 0);
     });
 
     it('rejects an unknown event name', async () => {
@@ -143,24 +143,24 @@ describe('GET /events', () => {
 
     it('returns one count per bucket over from/to, empty buckets as 0, and skips the raw listing', async () => {
       events.countEventsByWindow.mockResolvedValueOnce([
-        { windowStart: new Date('2026-09-01T10:00:00Z'), count: 3 },
-        { windowStart: new Date('2026-09-01T11:00:00Z'), count: 1 },
+        { windowStart: new Date('2026-09-01T10:00:00Z'), count: 3, quantity: 750 },
+        { windowStart: new Date('2026-09-01T11:00:00Z'), count: 1, quantity: 1 },
       ]);
 
-      const res = await request(app).get('/events').query({ account: 'acc_1', event: 'signup', window: '1h', ...day });
+      const res = await request(app).get('/events').query({ account: 'acc_1', event: 'connection_created', window: '1h', ...day });
 
       expect(res.status).toBe(200);
       expect(res.body.window).toBe('1h');
       expect(res.body.windowSeconds).toBe(3600);
       expect(res.body.meta).toEqual({ total: 24, limit: 50, offset: 0 });
       expect(res.body.buckets).toHaveLength(24);
-      expect(res.body.buckets[0]).toEqual({ windowStart: '2026-09-01T00:00:00.000Z', count: 0 });
-      expect(res.body.buckets[10]).toEqual({ windowStart: '2026-09-01T10:00:00.000Z', count: 3 });
-      expect(res.body.buckets[11]).toEqual({ windowStart: '2026-09-01T11:00:00.000Z', count: 1 });
-      expect(res.body.buckets[23]).toEqual({ windowStart: '2026-09-01T23:00:00.000Z', count: 0 });
-      expect(res.body.filters).toEqual({ account: 'acc_1', event: 'signup', from: '2026-09-01T00:00:00.000Z', to: '2026-09-02T00:00:00.000Z' });
+      expect(res.body.buckets[0]).toEqual({ windowStart: '2026-09-01T00:00:00.000Z', count: 0, quantity: 0 });
+      expect(res.body.buckets[10]).toEqual({ windowStart: '2026-09-01T10:00:00.000Z', count: 3, quantity: 750 });
+      expect(res.body.buckets[11]).toEqual({ windowStart: '2026-09-01T11:00:00.000Z', count: 1, quantity: 1 });
+      expect(res.body.buckets[23]).toEqual({ windowStart: '2026-09-01T23:00:00.000Z', count: 0, quantity: 0 });
+      expect(res.body.filters).toEqual({ account: 'acc_1', event: 'connection_created', from: '2026-09-01T00:00:00.000Z', to: '2026-09-02T00:00:00.000Z' });
       expect(events.countEventsByWindow).toHaveBeenCalledWith(
-        { accountId: 'acc_1', eventName: 'signup', timestamp: { gte: new Date(day.from), lte: new Date(day.to) } },
+        { accountId: 'acc_1', eventName: 'connection_created', timestamp: { gte: new Date(day.from), lte: new Date(day.to) } },
         3600,
       );
       expect(events.findEvents).not.toHaveBeenCalled();

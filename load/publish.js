@@ -7,8 +7,8 @@
  *     "target": "http://localhost:3000",
  *     "duration": "30s",
  *     "events": [
- *       { "account_id": "acc_acme", "event_name": "signup", "rps": 20 },
- *       { "account_id": "acc_globex", "event_name": "purchase", "rps": 5 }
+ *       { "account_id": "acc_acme", "event_name": "api_request", "rps": 20 },
+ *       { "account_id": "acc_globex", "event_name": "sync_run", "rps": 5 }
  *     ],
  *     "expectedStatuses": [202],
  *     "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }

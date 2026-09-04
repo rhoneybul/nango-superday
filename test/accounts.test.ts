@@ -10,15 +10,15 @@ vi.mock('../src/queue/publisher');
 describe('account validation', () => {
   describe('POST /ingest', () => {
     it('accepts an event for a known account', async () => {
-      const res = await request(app).post('/ingest').send({ account_id: 'acc_known', event_name: 'signup' });
+      const res = await request(app).post('/ingest').send({ account_id: 'acc_known', event_name: 'connection_created' });
       expect(res.status).toBe(202);
       expect(accounts.accountExists).toHaveBeenCalledWith('acc_known');
-      expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc_known', eventName: 'signup' }));
+      expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc_known', eventName: 'connection_created' }));
     });
 
     it('returns 404 for an unknown account and queues nothing', async () => {
       accounts.accountExists.mockResolvedValueOnce(false);
-      const res = await request(app).post('/ingest').send({ account_id: 'acc_nope', event_name: 'signup' });
+      const res = await request(app).post('/ingest').send({ account_id: 'acc_nope', event_name: 'connection_created' });
       expect(res.status).toBe(404);
       expect(res.body).toEqual({ error: 'Account acc_nope not found' });
       expect(publisher.publishEvent).not.toHaveBeenCalled();
@@ -32,11 +32,11 @@ describe('account validation', () => {
 
       // Unknown account: rejected before the limiter, so no RateLimit-* headers and no quota used.
       accounts.accountExists.mockResolvedValueOnce(false);
-      const unknown = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'signup' });
+      const unknown = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'connection_created' });
       expect(unknown.status).toBe(404);
       expect(unknown.headers['ratelimit-limit']).toBeUndefined();
 
-      const known = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'signup' });
+      const known = await request(app).post('/ingest').send({ account_id: 'acc_order', event_name: 'connection_created' });
       expect(known.status).toBe(202);
       expect(known.headers['ratelimit-limit']).toBe('100');
     });
@@ -59,7 +59,7 @@ describe('account validation', () => {
     });
 
     it('does not look anything up without an account filter', async () => {
-      const res = await request(app).get('/events').query({ event: 'signup' });
+      const res = await request(app).get('/events').query({ event: 'connection_created' });
       expect(res.status).toBe(200);
       expect(accounts.accountExists).not.toHaveBeenCalled();
     });

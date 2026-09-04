@@ -4,102 +4,102 @@
   "events": [
     {
       "account_id": "acc_acme",
-      "event_name": "signup",
+      "event_name": "connection_created",
       "rps": 5
     },
     {
       "account_id": "acc_acme",
-      "event_name": "login",
+      "event_name": "api_request",
       "rps": 5
     },
     {
       "account_id": "acc_acme",
-      "event_name": "logout",
+      "event_name": "webhook_received",
       "rps": 5
     },
     {
       "account_id": "acc_acme",
-      "event_name": "purchase",
+      "event_name": "sync_run",
       "rps": 5
     },
     {
       "account_id": "acc_globex",
-      "event_name": "signup",
+      "event_name": "connection_created",
       "rps": 5
     },
     {
       "account_id": "acc_globex",
-      "event_name": "login",
+      "event_name": "api_request",
       "rps": 5
     },
     {
       "account_id": "acc_globex",
-      "event_name": "logout",
+      "event_name": "webhook_received",
       "rps": 5
     },
     {
       "account_id": "acc_globex",
-      "event_name": "purchase",
+      "event_name": "sync_run",
       "rps": 5
     },
     {
       "account_id": "acc_initech",
-      "event_name": "signup",
+      "event_name": "connection_created",
       "rps": 5
     },
     {
       "account_id": "acc_initech",
-      "event_name": "login",
+      "event_name": "api_request",
       "rps": 5
     },
     {
       "account_id": "acc_initech",
-      "event_name": "logout",
+      "event_name": "webhook_received",
       "rps": 5
     },
     {
       "account_id": "acc_initech",
-      "event_name": "purchase",
+      "event_name": "sync_run",
       "rps": 5
     },
     {
       "account_id": "acc_umbrella",
-      "event_name": "signup",
+      "event_name": "connection_created",
       "rps": 5
     },
     {
       "account_id": "acc_umbrella",
-      "event_name": "login",
+      "event_name": "api_request",
       "rps": 5
     },
     {
       "account_id": "acc_umbrella",
-      "event_name": "logout",
+      "event_name": "webhook_received",
       "rps": 5
     },
     {
       "account_id": "acc_umbrella",
-      "event_name": "purchase",
+      "event_name": "sync_run",
       "rps": 5
     },
     {
       "account_id": "acc_hooli",
-      "event_name": "signup",
+      "event_name": "connection_created",
       "rps": 5
     },
     {
       "account_id": "acc_hooli",
-      "event_name": "login",
+      "event_name": "api_request",
       "rps": 5
     },
     {
       "account_id": "acc_hooli",
-      "event_name": "logout",
+      "event_name": "webhook_received",
       "rps": 5
     },
     {
       "account_id": "acc_hooli",
-      "event_name": "purchase",
+      "event_name": "sync_run",
       "rps": 5
     }
   ],

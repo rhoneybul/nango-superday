@@ -2,11 +2,11 @@
   "target": "http://localhost:3000",
   "duration": "60s",
   "events": [
-    { "account_id": "acc_acme", "event_name": "signup", "rps": 1 },
-    { "account_id": "acc_acme", "event_name": "login", "rps": 1.5 },
-    { "account_id": "acc_globex", "event_name": "purchase", "rps": 5 },
-    { "account_id": "acc_initech", "event_name": "login", "rps": 10 },
-    { "account_id": "acc_unknown", "event_name": "signup", "rps": 0.5 }
+    { "account_id": "acc_acme", "event_name": "connection_created", "rps": 1 },
+    { "account_id": "acc_acme", "event_name": "api_request", "rps": 1.5 },
+    { "account_id": "acc_globex", "event_name": "sync_run", "rps": 5 },
+    { "account_id": "acc_initech", "event_name": "api_request", "rps": 10 },
+    { "account_id": "acc_unknown", "event_name": "connection_created", "rps": 0.5 }
   ],
   "expectedStatuses": [202, 404, 429],
   "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
