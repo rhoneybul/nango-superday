@@ -14,6 +14,7 @@ COPY package*.json ./
 COPY prisma ./prisma
 # Dev deps are kept so the prisma CLI is available at runtime for `migrate deploy`.
 RUN npm ci && npx prisma generate
+COPY prisma.config.ts ./
 COPY --from=build /app/dist ./dist
 EXPOSE 3000
 CMD ["node", "dist/server.js"]

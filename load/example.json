@@ -1,11 +1,12 @@
 {
   "target": "http://localhost:3000",
-  "duration": "30s",
+  "duration": "60s",
   "events": [
-    { "account_id": "acc_1", "event_name": "signup", "rps": 20 },
-    { "account_id": "acc_1", "event_name": "login", "rps": 50 },
+    { "account_id": "acc_1", "event_name": "signup", "rps": 1 },
+    { "account_id": "acc_1", "event_name": "login", "rps": 1.5 },
     { "account_id": "acc_2", "event_name": "purchase", "rps": 5 },
-    { "account_id": "acc_3", "event_name": "logout", "rps": 0.5 }
+    { "account_id": "acc_3", "event_name": "login", "rps": 10 }
   ],
+  "expectedStatuses": [201, 429],
   "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
 }

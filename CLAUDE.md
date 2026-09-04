@@ -9,7 +9,8 @@ Event ingestion API. Express 5 + TypeScript + Prisma 7 (engine-free, `@prisma/ad
 - `npm run typecheck` — `tsc --noEmit`
 - `npm run build` — `prisma generate && tsc` → `dist/`
 - `npx prisma migrate dev --name <name>` — new migration; `npx prisma migrate deploy` — apply
-- `docker compose up --build` — Postgres :5432, Redis :6379, Grafana :3001 (admin/admin, Postgres datasource pre-provisioned from `grafana/provisioning`), API :3000; migrations applied on start
+- `docker compose up --build` — Postgres :5432, Redis :6379, Grafana :3001 (admin/admin, Postgres datasource pre-provisioned from `grafana/provisioning`), API :3000; migrations applied on start. Host ports are overridable via `DB_PORT`, `REDIS_PORT`, `GRAFANA_PORT`, `API_PORT`
+- `npm run load` — k6 load test through compose (`k6` service, profile `load`), config `load/<LOAD_CONFIG>` (default `example.json`), summary JSON in `load/results/`. `npm run load:local` uses a local `k6` binary against `localhost:3000`
 
 `npm install` runs `prisma generate` (postinstall). Generated client lives in `src/generated/prisma` (gitignored) — never edit it, never import from `@prisma/client` directly; import `../generated/prisma/client`.
 
@@ -26,6 +27,7 @@ src/lib/         prisma client (pg adapter), ValidationError + errorHandler, pin
 src/app.ts       exports the configured Express `app`
 src/server.ts    listen + graceful shutdown
 prisma/          schema.prisma + migrations (initial migration is hand-written; keep it in sync with schema)
+load/            k6 load generator. `publish.js` = one constant-arrival-rate scenario per `{account_id, event_name, rps}` in the JSON config; `README.md` documents the config + report. No app code here, plain k6.
 test/            vitest + supertest against the real `app`. Each test file `vi.mock`s the model module; helpers.ts resets the stubs to defaults.
 ```
 
@@ -65,3 +67,4 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 
 Phase 1 complete: scaffold, compose, schema/indexes, both endpoints, config package. Verified end-to-end against a real Postgres 16.
 Phase 2 complete: per-`account_id:event_name` rate limiting on POST /ingest (Redis-backed), Redis + Grafana in compose. 62 tests.
+Phase 3 complete: k6-based event publisher (`load/`), no bespoke CLI. Docker image now copies `prisma.config.ts` (needed by `prisma migrate deploy` at container start) and `.dockerignore` also excludes `src/generated`, `load/results`, `.git`.

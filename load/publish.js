@@ -10,6 +10,7 @@
  *       { "account_id": "acc_1", "event_name": "signup", "rps": 20 },
  *       { "account_id": "acc_2", "event_name": "purchase", "rps": 5 }
  *     ],
+ *     "expectedStatuses": [201],
  *     "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
  *   }
  *
@@ -74,6 +75,11 @@ function parseConfig(raw) {
         }
       });
     }
+    if (cfg.expectedStatuses !== undefined) {
+      const ok = Array.isArray(cfg.expectedStatuses) && cfg.expectedStatuses.length > 0
+        && cfg.expectedStatuses.every((n) => Number.isInteger(n) && n >= 100 && n <= 599);
+      if (!ok) problems.push('expectedStatuses: must be a non-empty array of HTTP status codes, e.g. [201, 429]');
+    }
     if (cfg.thresholds !== undefined) {
       if (!isObject(cfg.thresholds)) problems.push('thresholds: must be an object');
       else {
@@ -88,7 +94,7 @@ function parseConfig(raw) {
     }
   }
   if (problems.length) throw new Error(`${CONFIG_PATH}:\n  - ${problems.join('\n  - ')}`);
-  return Object.assign({ thresholds: {} }, cfg);
+  return Object.assign({ thresholds: {}, expectedStatuses: [201] }, cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +120,8 @@ config.events.forEach((entry, i) => {
     rate: integerRate ? entry.rps : Math.round(entry.rps * 1000),
     timeUnit: integerRate ? '1s' : '1000s',
     duration: config.duration,
-    // Enough VUs for ~200ms responses; k6 grows towards maxVUs (with a warning) if the API is slower.
-    preAllocatedVUs: Math.max(2, Math.ceil(entry.rps / 5)),
+    // Enough VUs for ~500ms responses; k6 grows towards maxVUs (with a warning) if the API is slower.
+    preAllocatedVUs: Math.max(5, Math.ceil(entry.rps / 2)),
     maxVUs: entry.maxVUs || Math.max(20, Math.ceil(entry.rps * 2)),
     gracefulStop: '5s',
     tags: { account: entry.account_id, event: entry.event_name },
@@ -132,11 +138,16 @@ if (config.thresholds.p95Ms !== undefined) thresholds.http_req_duration = [`p(95
 if (config.thresholds.maxErrorRate !== undefined) thresholds.http_req_failed = [`rate<=${config.thresholds.maxErrorRate}`];
 
 // Status codes the API is known to return; anything else lands in the responses_* counters below.
-for (const status of [201, 400, 500]) thresholds[`http_reqs{status:${status}}`] = ['count>=0'];
+for (const status of [201, 400, 429, 500]) thresholds[`http_reqs{status:${status}}`] = ['count>=0'];
 for (const name of Object.keys(scenarios)) {
   thresholds[`http_reqs{scenario:${name}}`] = ['count>=0'];
   thresholds[`http_req_duration{scenario:${name}}`] = ['p(95)>=0'];
 }
+
+// Which statuses count as success for http_req_failed / the maxErrorRate threshold.
+http.setResponseCallback(http.expectedStatuses(...config.expectedStatuses));
+
+const EXPECTED_CHECK = `status in [${config.expectedStatuses.join(', ')}]`;
 
 export const options = {
   scenarios,
@@ -171,7 +182,8 @@ function classify(status) {
 /** Wait for the API before the clock starts (compose may still be booting it). */
 export function setup() {
   for (let attempt = 1; attempt <= 30; attempt++) {
-    const res = http.get(`${TARGET}/health`, { tags: { name: 'health' } });
+    // 200 is the expected status here, whatever expectedStatuses says about /ingest.
+    const res = http.get(`${TARGET}/health`, { tags: { name: 'health' }, responseCallback: http.expectedStatuses(200) });
     if (res.status === 200) {
       console.log(`Target ${TARGET} healthy; ${Object.keys(scenarios).length} stream(s) for ${config.duration}`);
       return;
@@ -189,5 +201,5 @@ export function publish() {
     tags: { name: 'ingest' },
   });
   responses[classify(res.status)].add(1);
-  check(res, { 'ingest returned 201': (r) => r.status === 201 });
+  check(res, { [EXPECTED_CHECK]: (r) => config.expectedStatuses.includes(r.status) });
 }
