@@ -63,6 +63,9 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
+      # Infinity lets dashboards query the API's own GET /events (grafana/provisioning/dashboards/api-usage.json).
+      # Downloaded on container start, so the first start needs internet access.
+      GF_INSTALL_PLUGINS: yesoreyeram-infinity-datasource
       # Alerting (grafana/provisioning/alerting): the Slack contact point posts to #superday-rob
       # with this bot token. Set SLACK_BOT_TOKEN in .env; the placeholder keeps Grafana booting
       # without one (deliveries then fail until it is set).

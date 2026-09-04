@@ -1,0 +1,491 @@
+{
+  "uid": "nango-api-usage",
+  "title": "API Usage (via GET /events)",
+  "tags": [
+    "nango",
+    "api"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "timezone": "browser",
+  "description": "Every panel is a call to the API's own GET /events with window/from/to and the filters below. Pick a window, an account, and which event names to break down by.",
+  "templating": {
+    "list": [
+      {
+        "name": "window",
+        "label": "Window (bucket size)",
+        "type": "custom",
+        "query": "1m,5m,15m,1h,6h,1d",
+        "current": {
+          "text": "1h",
+          "value": "1h"
+        },
+        "options": [
+          {
+            "text": "1m",
+            "value": "1m",
+            "selected": false
+          },
+          {
+            "text": "5m",
+            "value": "5m",
+            "selected": false
+          },
+          {
+            "text": "15m",
+            "value": "15m",
+            "selected": false
+          },
+          {
+            "text": "1h",
+            "value": "1h",
+            "selected": true
+          },
+          {
+            "text": "6h",
+            "value": "6h",
+            "selected": false
+          },
+          {
+            "text": "1d",
+            "value": "1d",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "name": "account",
+        "label": "Account",
+        "type": "custom",
+        "query": "acc_acme,acc_globex,acc_initech,acc_umbrella,acc_hooli",
+        "current": {
+          "text": "acc_acme",
+          "value": "acc_acme"
+        },
+        "options": [
+          {
+            "text": "acc_acme",
+            "value": "acc_acme",
+            "selected": true
+          },
+          {
+            "text": "acc_globex",
+            "value": "acc_globex",
+            "selected": false
+          },
+          {
+            "text": "acc_initech",
+            "value": "acc_initech",
+            "selected": false
+          },
+          {
+            "text": "acc_umbrella",
+            "value": "acc_umbrella",
+            "selected": false
+          },
+          {
+            "text": "acc_hooli",
+            "value": "acc_hooli",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      },
+      {
+        "name": "event",
+        "label": "Break down by event",
+        "type": "custom",
+        "multi": true,
+        "includeAll": true,
+        "query": "api_request,sync_run,records_synced,action_executed,webhook_received,connection_created",
+        "current": {
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "options": [
+          {
+            "text": "All",
+            "value": "$__all",
+            "selected": true
+          },
+          {
+            "text": "api_request",
+            "value": "api_request",
+            "selected": false
+          },
+          {
+            "text": "sync_run",
+            "value": "sync_run",
+            "selected": false
+          },
+          {
+            "text": "records_synced",
+            "value": "records_synced",
+            "selected": false
+          },
+          {
+            "text": "action_executed",
+            "value": "action_executed",
+            "selected": false
+          },
+          {
+            "text": "webhook_received",
+            "value": "webhook_received",
+            "selected": false
+          },
+          {
+            "text": "connection_created",
+            "value": "connection_created",
+            "selected": false
+          }
+        ],
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "All accounts, all events, per $window",
+      "type": "timeseries",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "metering-api"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "metering-api"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:3000/events?window=${window}&from=${__from:date:iso}&to=${__to:date:iso}",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "buckets",
+          "columns": [
+            {
+              "selector": "windowStart",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "count",
+              "text": "events",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "GET /events?window=$window&from&to. One point per bucket, empty buckets as 0."
+    },
+    {
+      "id": 2,
+      "title": "$account, all events, per $window",
+      "type": "timeseries",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "metering-api"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "metering-api"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:3000/events?window=${window}&from=${__from:date:iso}&to=${__to:date:iso}&account=${account}",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "buckets",
+          "columns": [
+            {
+              "selector": "windowStart",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "count",
+              "text": "events",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "GET /events?account=$account&window=$window&from&to"
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "$account broken down by event (one panel per selected event)",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 3,
+      "title": "$account \u00b7 $event",
+      "type": "timeseries",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "metering-api"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 9,
+        "w": 8,
+        "h": 7
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "metering-api"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:3000/events?window=${window}&from=${__from:date:iso}&to=${__to:date:iso}&account=${account}&event=${event}",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "buckets",
+          "columns": [
+            {
+              "selector": "windowStart",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "count",
+              "text": "events",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 60
+          }
+        },
+        "overrides": []
+      },
+      "options": {},
+      "repeat": "event",
+      "repeatDirection": "h",
+      "maxPerRow": 3,
+      "description": "GET /events?account=$account&event=$event&window=$window&from&to. Repeated for every event selected in the 'Break down by event' variable."
+    },
+    {
+      "id": 11,
+      "type": "row",
+      "title": "Totals and latest events",
+      "collapsed": false,
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 1
+      },
+      "panels": []
+    },
+    {
+      "id": 4,
+      "title": "$account: events in range",
+      "type": "stat",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "metering-api"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 17,
+        "w": 6,
+        "h": 5
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "metering-api"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:3000/events?window=${window}&from=${__from:date:iso}&to=${__to:date:iso}&account=${account}",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "buckets",
+          "columns": [
+            {
+              "selector": "windowStart",
+              "text": "time",
+              "type": "timestamp"
+            },
+            {
+              "selector": "count",
+              "text": "events",
+              "type": "number"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "/^events$/"
+        },
+        "textMode": "value"
+      },
+      "transformations": [
+        {
+          "id": "reduce",
+          "options": {
+            "reducers": [
+              "sum"
+            ],
+            "mode": "reduceFields",
+            "includeTimeField": false
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "$account: latest events (GET /events?account&limit=50)",
+      "type": "table",
+      "datasource": {
+        "type": "yesoreyeram-infinity-datasource",
+        "uid": "metering-api"
+      },
+      "gridPos": {
+        "x": 6,
+        "y": 17,
+        "w": 18,
+        "h": 9
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "yesoreyeram-infinity-datasource",
+            "uid": "metering-api"
+          },
+          "type": "json",
+          "source": "url",
+          "format": "table",
+          "parser": "backend",
+          "url": "http://api:3000/events?account=${account}&from=${__from:date:iso}&to=${__to:date:iso}&limit=50",
+          "url_options": {
+            "method": "GET",
+            "data": ""
+          },
+          "root_selector": "data",
+          "columns": [
+            {
+              "selector": "timestamp",
+              "text": "timestamp",
+              "type": "timestamp"
+            },
+            {
+              "selector": "eventName",
+              "text": "event",
+              "type": "string"
+            },
+            {
+              "selector": "metadata.connection_id",
+              "text": "connection",
+              "type": "string"
+            },
+            {
+              "selector": "metadata",
+              "text": "metadata",
+              "type": "string"
+            }
+          ]
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    }
+  ]
+}

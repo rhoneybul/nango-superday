@@ -13,11 +13,18 @@ describe('POST /ingest', () => {
     const res = await request(app).post('/ingest').send({ account_id: 'acc_1', event_name: 'connection_created', metadata: META.connection_created });
 
     expect(res.status).toBe(202);
-    expect(res.body.data).toEqual({ accountId: 'acc_1', eventName: 'connection_created', metadata: META.connection_created, timestamp: expect.any(String) });
+    expect(res.body.data).toEqual({ accountId: 'acc_1', eventId: expect.stringMatching(/^[0-9a-f-]{36}$/), eventName: 'connection_created', metadata: META.connection_created, timestamp: expect.any(String) });
     // No timestamp supplied → stamped with the time the API received it.
     expect(new Date(res.body.data.timestamp).getTime()).toBeGreaterThanOrEqual(before);
-    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'connection_created', metadata: META.connection_created, timestamp: expect.any(Date) });
+    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventId: expect.any(String), eventName: 'connection_created', metadata: META.connection_created, timestamp: expect.any(Date) });
     expect(events.createEvent).not.toHaveBeenCalled();
+  });
+
+  it('keeps a client-supplied event_id and passes it to the queue', async () => {
+    const res = await request(app).post('/ingest').send({ account_id: 'acc_1', event_id: 'sync-42-batch-7', event_name: 'sync_run', metadata: META.sync_run });
+    expect(res.status).toBe(202);
+    expect(res.body.data.eventId).toBe('sync-42-batch-7');
+    expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ eventId: 'sync-42-batch-7' }));
   });
 
   it('carries metadata through to the queue', async () => {

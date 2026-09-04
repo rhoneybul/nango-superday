@@ -7,6 +7,7 @@ export type EventMessage = NewEvent;
 
 const schema: z.ZodType<EventMessage, unknown> = z.object({
   accountId: z.string().min(1),
+  eventId: z.string().min(1),
   eventName: z.enum(EventName),
   metadata: z.record(z.string(), z.unknown()),
   timestamp: z.coerce.date(),

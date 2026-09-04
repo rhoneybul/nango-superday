@@ -52,6 +52,7 @@ To add one, add the id to the list and run `npm run seed`.
 
 | Field        | Meaning                                                                                              |
 |--------------|------------------------------------------------------------------------------------------------------|
+| `event_id`   | Optional idempotency key, unique per account. Send the same event twice (retry, replay) and it is stored once. Omitted → the API generates a UUID |
 | `event_name` | What was metered; one of the catalogue below                                                        |
 | `metadata`   | Required. Must carry the fields the catalogue lists for that event; anything extra is kept. Up to 4 KB |
 | `timestamp`  | Optional, defaults to now, may not be in the future                                                 |
@@ -69,7 +70,7 @@ The catalogue (`src/models/event-catalog.ts`, also served by `GET /event-types`)
 
 A missing or mistyped field is a `400` naming it (`metadata.records: …`). To meter something new, add an entry to the catalogue: validation and `GET /event-types` follow.
 
-The event is published to the queue and stored by the consumer a moment later; the response echoes what was queued.
+The event is published to the queue and stored by the consumer a moment later; the response echoes what was queued, including the `eventId`.
 
 ### `POST /ingest/batch` → 202
 
@@ -159,14 +160,16 @@ Two rules, `RateLimitExceeded` (single ingest) and `BatchRateLimitExceeded` (bat
 ## Queue
 
 `POST /ingest` publishes to the `events` queue and only answers 202 once the broker has stored the message. The consumer
-(`src/consumer.ts`) inserts each event into Postgres and acknowledges it. A message that cannot be decoded goes straight
+(`src/consumer.ts`) inserts each event into Postgres and acknowledges it; an event whose account + `event_id` is already stored (a retry or a redelivery) is acknowledged without a second insert. A message that cannot be decoded goes straight
 to the `events.dlq` dead-letter queue; one whose insert fails is retried up to 5 times, then dead-lettered. Both sides
 reconnect on their own if the broker restarts. Run more consumers with `docker compose up -d --scale consumer=3`.
 
 ## Dashboards
 
-Grafana comes with three: **Events** (counts over time from Postgres), **API HTTP** (requests, latency, errors, rate-limit
-hits) and **Event Queue** (queue depth, consumers, message rates). Source: `grafana/provisioning/dashboards/`.
+Grafana comes with four: **API Usage** (calls the API's own `GET /events` with a chosen window, account and event
+names, one panel per selected event; uses the Infinity datasource plugin, installed on container start), **Events**
+(counts over time from Postgres), **API HTTP** (requests, latency, errors, rate-limit hits) and **Event Queue** (queue
+depth, consumers, message rates). Source: `grafana/provisioning/dashboards/`.
 
 ## Load testing
 

@@ -42,6 +42,8 @@ const METADATA_MAX_BYTES = 4096;
  */
 const eventFields = {
   account_id: z.string().trim().min(1),
+  /** Optional idempotency key: send the same event twice (retry, replay) and it is stored once. */
+  event_id: z.string().trim().min(1).max(128).optional(),
   event_name: z.enum(EventName),
   metadata: z.record(z.string(), z.unknown()).refine((m) => JSON.stringify(m).length <= METADATA_MAX_BYTES, `must be at most ${METADATA_MAX_BYTES} bytes as JSON`),
   timestamp: pastDate.optional(),
@@ -56,6 +58,7 @@ function checkCatalogMetadata(e: { event_name: EventName; metadata: Record<strin
 const eventSchema = z.object(eventFields).superRefine(checkCatalogMetadata);
 const toInput = (e: z.infer<typeof eventSchema>): IngestInput => ({
   accountId: e.account_id,
+  eventId: e.event_id,
   eventName: e.event_name,
   metadata: e.metadata,
   timestamp: e.timestamp,

@@ -18,7 +18,7 @@ describe('POST /ingest/batch', () => {
     expect(res.status).toBe(202);
     expect(res.body).toEqual({ data: { success: 3, failed: 0, errors: [] } });
     expect(publisher.publishEvent).toHaveBeenCalledTimes(3);
-    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'api_request', metadata: META.api_request, timestamp: new Date('2026-09-01T11:00:00Z') });
+    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventId: expect.any(String), eventName: 'api_request', metadata: META.api_request, timestamp: new Date('2026-09-01T11:00:00Z') });
     expect(events.createEvent).not.toHaveBeenCalled();
   });
 

@@ -13,6 +13,8 @@ datasource db {
 model Event {
   id        BigInt   @id @default(autoincrement())
   accountId String   @map("account_id")
+  /// Client-supplied idempotency key (or a UUID the API generated). Unique per account: a redelivered or retried event is stored once.
+  eventId   String   @map("event_id")
   eventName String   @map("event_name")
   /// Free-form context for billing or debugging (connection id, provider, model, …).
   metadata  Json?
@@ -24,6 +26,7 @@ model Event {
   @@index([accountId, timestamp])
   @@index([accountId, eventName, timestamp])
   @@index([eventName, timestamp])
+  @@unique([accountId, eventId])
   @@map("events")
 }
 

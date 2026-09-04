@@ -1,0 +1,10 @@
+# The metering API as a datasource (Infinity plugin): dashboards call GET /events directly,
+# so what Grafana shows is exactly what a customer would get from the endpoint.
+apiVersion: 1
+datasources:
+  - name: Metering API
+    uid: metering-api   # referenced by provisioning/dashboards/api-usage.json
+    type: yesoreyeram-infinity-datasource
+    jsonData:
+      allowedHosts:
+        - http://api:3000

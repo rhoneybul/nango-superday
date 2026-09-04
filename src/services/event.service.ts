@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { EventName } from '../models/event-name';
 import * as events from '../models/event.model';
 import type { EventRecord, EventWhere, WindowBucket } from '../models/event.model';
@@ -16,6 +17,8 @@ import { publishEvent } from '../queue/publisher';
 
 export interface IngestInput {
   accountId: string;
+  /** Idempotency key. Omitted → the API generates a UUID, so every stored event has one. */
+  eventId?: string;
   eventName: EventName;
   /** The fields the event's catalogue entry requires, plus anything extra the client sent. */
   metadata: Record<string, unknown>;
@@ -25,7 +28,7 @@ export interface IngestInput {
 
 /** Publishes the event to the queue; src/consumer.ts inserts it into Postgres. Returns what was queued. */
 export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
-  const message: EventMessage = { ...input, timestamp: input.timestamp ?? new Date() };
+  const message: EventMessage = { ...input, eventId: input.eventId ?? randomUUID(), timestamp: input.timestamp ?? new Date() };
   await publishEvent(message);
   return message;
 }

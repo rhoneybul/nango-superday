@@ -12,7 +12,7 @@ import { assertTopology, QUEUE } from './queue/topology';
  * `node dist/consumer.js`) or locally with `npm run dev:consumer`.
  *
  * Every message ends in exactly one of:
- *   ack                  inserted
+ *   ack                  inserted, or already stored (same account + event_id: a retry or redelivery)
  *   nack, requeue=false  undecodable (poison) → dead-letter queue immediately
  *   nack, requeue=true   insert failed (e.g. Postgres down) → redelivered; the broker
  *                        dead-letters it after DELIVERY_LIMIT deliveries (see queue/topology.ts)
@@ -29,7 +29,8 @@ export async function handleMessage(channel: Pick<Channel, 'ack' | 'nack'>, msg:
     return;
   }
   try {
-    await events.createEvent(message);
+    const stored = await events.createEvent(message);
+    if (!stored) log.info({ accountId: message.accountId, eventId: message.eventId }, 'duplicate event, already stored');
     channel.ack(msg);
   } catch (err) {
     log.error({ err, message, redelivered: msg.fields.redelivered }, 'insert failed, requeueing');

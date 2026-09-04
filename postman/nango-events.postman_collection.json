@@ -100,7 +100,8 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"metadata kept as sent\", () => { const m = pm.response.json().data.metadata; pm.expect(m.records).to.eql(250); pm.expect(m.model).to.eql(\"Contact\"); });"
+                  "pm.test(\"metadata kept as sent\", () => { const m = pm.response.json().data.metadata; pm.expect(m.records).to.eql(250); pm.expect(m.model).to.eql(\"Contact\"); });",
+                  "pm.test(\"event_id echoed\", () => pm.expect(pm.response.json().data.eventId).to.be.a(\"string\"));"
                 ]
               }
             }
@@ -124,9 +125,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"records_synced\",\n  \"timestamp\": \"{{nowIso}}\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"model\": \"Contact\",\n    \"records\": 250,\n    \"provider\": \"hubspot\"\n  }\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_id\": \"sync-conn_42-{{$timestamp}}\",\n  \"event_name\": \"records_synced\",\n  \"timestamp\": \"{{nowIso}}\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"model\": \"Contact\",\n    \"records\": 250,\n    \"provider\": \"hubspot\"\n  }\n}"
             },
-            "description": ""
+            "description": "event_id is the idempotency key: send the same one twice and the event is stored once (the second POST still answers 202). Omit it and the API generates a UUID."
           }
         },
         {
@@ -165,6 +166,53 @@
               "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"timestamp\": {{nowMs}},\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"provider\": \"salesforce\",\n    \"endpoint\": \"/services/data/v60.0/query\"\n  }\n}"
             },
             "description": ""
+          }
+        },
+        {
+          "name": "Same event twice (idempotent: stored once)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.variables.set('dupId', 'dup-' + Date.now());"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"event_id kept\", () => pm.expect(pm.response.json().data.eventId).to.eql(pm.variables.get(\"dupId\")));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ingest",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_id\": \"{{dupId}}\",\n  \"event_name\": \"api_request\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"provider\": \"salesforce\",\n    \"endpoint\": \"/services/data/v60.0/query\"\n  }\n}"
+            },
+            "description": "Send this twice quickly (or run it with 2 iterations): both answer 202, but GET /events shows the event once. The consumer skips the second insert because account + event_id is unique."
           }
         }
       ]
