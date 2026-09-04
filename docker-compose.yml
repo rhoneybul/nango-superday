@@ -15,10 +15,36 @@ services:
       timeout: 3s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  grafana:
+    image: grafana/grafana:latest
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    ports:
+      - "3001:3000"
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning
+      - grafana-data:/var/lib/grafana
+
   api:
     build: .
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     environment:
       NODE_ENV: production
@@ -26,6 +52,8 @@ services:
       DATABASE_URL: postgresql://nango:nango@db:5432/nango?schema=public
       EVENTS_DEFAULT_LIMIT: 100
       EVENTS_MAX_LIMIT: 1000
+      INGEST_RATE_LIMIT_PER_MINUTE: 100
+      REDIS_URL: redis://redis:6379
       LOG_LEVEL: info
     ports:
       - "${API_PORT:-3000}:3000"
@@ -55,3 +83,4 @@ services:
 
 volumes:
   pgdata:
+  grafana-data:

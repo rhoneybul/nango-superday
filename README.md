@@ -8,7 +8,7 @@ Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
 docker compose up --build
 ```
 
-Starts Postgres on `:5432` and the API on `:3000`. Migrations are applied automatically on startup.
+Starts Postgres on `:5432`, Redis on `:6379`, Grafana on `:3001` (login `admin`/`admin`, the events database is pre-configured as a datasource) and the API on `:3000`. Migrations are applied automatically on startup.
 
 ## Run locally
 
@@ -29,6 +29,8 @@ npm run dev
 ```
 
 `event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database. Returns `201` with the stored event.
+
+Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory.
 
 ### `GET /events`
 
@@ -62,7 +64,7 @@ Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path"
 src/
   config/        settings read from env (single source of truth)
   routes.ts      URL → validation middleware → controller wiring
-  middleware/    request id, request logging, input validation (zod)
+  middleware/    request id, request logging, rate limiting, input validation (zod)
   controllers/   HTTP concerns: status codes, response shape
   services/      business logic (filter building, model calls) on validated input
   models/        Prisma data access (events table)
