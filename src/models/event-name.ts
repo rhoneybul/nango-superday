@@ -9,7 +9,7 @@ export enum EventName {
   ApiRequest = 'api_request',
   /** One execution of a sync (continuous data pull). */
   SyncRun = 'sync_run',
-  /** Records moved by a sync; send `quantity` = number of records. */
+  /** Records moved by a sync; put the count in `metadata` (e.g. `{ "records": 250 }`). */
   RecordsSynced = 'records_synced',
   /** One execution of an action (on-demand call). */
   ActionExecuted = 'action_executed',

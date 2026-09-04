@@ -143,8 +143,8 @@ describe('GET /events', () => {
 
     it('returns one count per bucket over from/to, empty buckets as 0, and skips the raw listing', async () => {
       events.countEventsByWindow.mockResolvedValueOnce([
-        { windowStart: new Date('2026-09-01T10:00:00Z'), count: 3, quantity: 750 },
-        { windowStart: new Date('2026-09-01T11:00:00Z'), count: 1, quantity: 1 },
+        { windowStart: new Date('2026-09-01T10:00:00Z'), count: 3 },
+        { windowStart: new Date('2026-09-01T11:00:00Z'), count: 1 },
       ]);
 
       const res = await request(app).get('/events').query({ account: 'acc_1', event: 'connection_created', window: '1h', ...day });
@@ -154,10 +154,10 @@ describe('GET /events', () => {
       expect(res.body.windowSeconds).toBe(3600);
       expect(res.body.meta).toEqual({ total: 24, limit: 50, offset: 0 });
       expect(res.body.buckets).toHaveLength(24);
-      expect(res.body.buckets[0]).toEqual({ windowStart: '2026-09-01T00:00:00.000Z', count: 0, quantity: 0 });
-      expect(res.body.buckets[10]).toEqual({ windowStart: '2026-09-01T10:00:00.000Z', count: 3, quantity: 750 });
-      expect(res.body.buckets[11]).toEqual({ windowStart: '2026-09-01T11:00:00.000Z', count: 1, quantity: 1 });
-      expect(res.body.buckets[23]).toEqual({ windowStart: '2026-09-01T23:00:00.000Z', count: 0, quantity: 0 });
+      expect(res.body.buckets[0]).toEqual({ windowStart: '2026-09-01T00:00:00.000Z', count: 0 });
+      expect(res.body.buckets[10]).toEqual({ windowStart: '2026-09-01T10:00:00.000Z', count: 3 });
+      expect(res.body.buckets[11]).toEqual({ windowStart: '2026-09-01T11:00:00.000Z', count: 1 });
+      expect(res.body.buckets[23]).toEqual({ windowStart: '2026-09-01T23:00:00.000Z', count: 0 });
       expect(res.body.filters).toEqual({ account: 'acc_1', event: 'connection_created', from: '2026-09-01T00:00:00.000Z', to: '2026-09-02T00:00:00.000Z' });
       expect(events.countEventsByWindow).toHaveBeenCalledWith(
         { accountId: 'acc_1', eventName: 'connection_created', timestamp: { gte: new Date(day.from), lte: new Date(day.to) } },

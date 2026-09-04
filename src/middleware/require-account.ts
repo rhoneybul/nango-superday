@@ -1,7 +1,6 @@
-import { HttpError } from '../lib/errors';
 import { accountExists } from '../models/account.model';
 import { requireAccount } from '../services/account.service';
-import type { IngestInput, ListEventsInput } from '../services/event.service';
+import type { BatchState, IngestInput, ListEventsInput } from '../services/event.service';
 import type { Validated } from './validation';
 
 /**
@@ -22,14 +21,17 @@ export const requireEventsAccount: Validated<{ listEvents: ListEventsInput }> = 
   next();
 };
 
-/** POST /ingest/batch → 400 listing every event whose account is unknown (path `events.<index>.account_id`). */
-export const requireBatchAccounts: Validated<{ batch: IngestInput[] }> = async (_req, res, next) => {
-  const ids = [...new Set(res.locals.batch.map((e) => e.accountId))];
+/** POST /ingest/batch: events for unknown accounts move to `errors`; the rest carry on. */
+export const requireBatchAccounts: Validated<{ batch: BatchState }> = async (_req, res, next) => {
+  const { batch } = res.locals;
+  const ids = [...new Set(batch.accepted.map((e) => e.input.accountId))];
   const exists = await Promise.all(ids.map((id) => accountExists(id)));
   const unknown = new Set(ids.filter((_, i) => !exists[i]));
-  if (unknown.size) {
-    const details = res.locals.batch.flatMap((e, i) => (unknown.has(e.accountId) ? [{ path: `events.${i}.account_id`, message: `Account ${e.accountId} not found` }] : []));
-    throw new HttpError(400, details.map((d) => `${d.path}: ${d.message}`).join('; '), details);
+  for (const { index, input } of batch.accepted) {
+    if (unknown.has(input.accountId)) {
+      batch.errors.push({ index, path: `events.${index}.account_id`, message: `Account ${input.accountId} not found`, reason: 'unknown_account' });
+    }
   }
+  batch.accepted = batch.accepted.filter((e) => !unknown.has(e.input.accountId));
   next();
 };

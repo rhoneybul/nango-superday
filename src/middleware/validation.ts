@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { config } from '../config';
 import { HttpError } from '../lib/errors';
 import { EventName } from '../models/event-name';
-import type { IngestInput, ListEventsInput } from '../services/event.service';
+import type { BatchState, IngestInput, ListEventsInput } from '../services/event.service';
 
 /**
  * Request validation with zod. Each middleware parses the raw body / query
@@ -38,8 +38,6 @@ const METADATA_MAX_BYTES = 4096;
 const eventSchema = z.object({
   account_id: z.string().trim().min(1),
   event_name: z.enum(EventName),
-  /** Units of usage this event represents, e.g. records synced. Default 1. */
-  quantity: z.number().int().positive().default(1),
   /** Free-form context kept with the event for billing (connection id, provider, model, …). */
   metadata: z
     .record(z.string(), z.unknown())
@@ -50,7 +48,6 @@ const eventSchema = z.object({
 const toInput = (e: z.infer<typeof eventSchema>): IngestInput => ({
   accountId: e.account_id,
   eventName: e.event_name,
-  quantity: e.quantity,
   metadata: e.metadata,
   timestamp: e.timestamp,
 });
@@ -75,16 +72,22 @@ const batchEventSchema = eventSchema.extend({
   timestamp: z.custom<unknown>((value) => value !== undefined, 'is required').pipe(pastDate),
 });
 
-/** Every event is checked; any failure rejects the whole batch with one `details` entry per problem (path `events.<index>.<field>`). */
-const batchSchema = z.object({
+/** The envelope is checked as a whole (400); each event is then checked on its own, so one bad event does not sink the others. */
+const batchEnvelopeSchema = z.object({
   events: z
-    .array(batchEventSchema)
+    .array(z.unknown())
     .min(1, 'must contain at least one event')
     .max(BATCH_MAX_EVENTS, `must contain at most ${BATCH_MAX_EVENTS} events`),
 });
 
-export const validateIngestBatch: Validated<{ batch: IngestInput[] }> = (req, res, next) => {
-  res.locals.batch = parse(batchSchema, req.body).events.map(toInput);
+export const validateIngestBatch: Validated<{ batch: BatchState }> = (req, res, next) => {
+  const batch: BatchState = { accepted: [], errors: [] };
+  parse(batchEnvelopeSchema, req.body).events.forEach((raw, index) => {
+    const result = batchEventSchema.safeParse(raw);
+    if (result.success) batch.accepted.push({ index, input: toInput(result.data) });
+    else for (const issue of result.error.issues) batch.errors.push({ index, path: `events.${[index, ...issue.path].join('.')}`, message: issue.message, reason: 'invalid' });
+  });
+  res.locals.batch = batch;
   next();
 };
 

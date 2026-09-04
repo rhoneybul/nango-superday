@@ -16,24 +16,34 @@ describe('POST /ingest/batch', () => {
       .send({ events: [ok('acc_1', 'connection_created'), ok('acc_1', 'api_request', '2026-09-01T11:00:00Z'), ok('acc_2', 'sync_run')] });
 
     expect(res.status).toBe(202);
-    expect(res.body).toEqual({ data: { queued: 3 } });
+    expect(res.body).toEqual({ data: { queued: 3, failed: 0, errors: [] } });
     expect(publisher.publishEvent).toHaveBeenCalledTimes(3);
-    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'api_request', quantity: 1, metadata: undefined, timestamp: new Date('2026-09-01T11:00:00Z') });
+    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'api_request', metadata: undefined, timestamp: new Date('2026-09-01T11:00:00Z') });
     expect(events.createEvent).not.toHaveBeenCalled();
   });
 
-  it('rejects the whole batch and lists every invalid event, with its index', async () => {
+  it('queues the valid events and lists every invalid one with its index', async () => {
     const res = await request(app)
       .post('/ingest/batch')
       .send({ events: [ok('acc_1', 'connection_created'), ok('acc_1', 'page_view'), { account_id: 'acc_1', event_name: 'api_request' }, ok('', 'connection_created', '2999-01-01T00:00:00Z')] });
 
-    expect(res.status).toBe(400);
-    expect(res.body.details).toEqual([
-      { path: 'events.1.event_name', message: expect.stringContaining('Invalid option') },
-      { path: 'events.2.timestamp', message: 'is required' },
-      { path: 'events.3.account_id', message: expect.stringContaining('Too small') },
-      { path: 'events.3.timestamp', message: 'must not be in the future' },
+    expect(res.status).toBe(202);
+    expect(res.body.data.queued).toBe(1);
+    expect(res.body.data.failed).toBe(4);
+    expect(res.body.data.errors).toEqual([
+      { index: 1, path: 'events.1.event_name', message: expect.stringContaining('Invalid option'), reason: 'invalid' },
+      { index: 2, path: 'events.2.timestamp', message: 'is required', reason: 'invalid' },
+      { index: 3, path: 'events.3.account_id', message: expect.stringContaining('Too small'), reason: 'invalid' },
+      { index: 3, path: 'events.3.timestamp', message: 'must not be in the future', reason: 'invalid' },
     ]);
+    expect(publisher.publishEvent).toHaveBeenCalledTimes(1);
+    expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc_1', eventName: 'connection_created' }));
+  });
+
+  it('answers 400 when nothing could be queued', async () => {
+    const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_1', 'page_view'), { account_id: 'acc_1', event_name: 'api_request' }] });
+    expect(res.status).toBe(400);
+    expect(res.body.data).toMatchObject({ queued: 0, failed: 2 });
     expect(publisher.publishEvent).not.toHaveBeenCalled();
   });
 
@@ -49,21 +59,26 @@ describe('POST /ingest/batch', () => {
     expect(publisher.publishEvent).not.toHaveBeenCalled();
   });
 
-  it('lists unknown accounts by event index and queues nothing', async () => {
+  it('queues events for known accounts and lists the ones for unknown accounts', async () => {
     accounts.accountExists.mockImplementation(async (id) => id !== 'acc_nope');
     const res = await request(app)
       .post('/ingest/batch')
       .send({ events: [ok('acc_nope', 'connection_created'), ok('acc_ok', 'connection_created'), ok('acc_nope', 'api_request')] });
 
-    expect(res.status).toBe(400);
-    expect(res.body.details).toEqual([
-      { path: 'events.0.account_id', message: 'Account acc_nope not found' },
-      { path: 'events.2.account_id', message: 'Account acc_nope not found' },
-    ]);
-    expect(publisher.publishEvent).not.toHaveBeenCalled();
+    expect(res.status).toBe(202);
+    expect(res.body.data).toEqual({
+      queued: 1,
+      failed: 2,
+      errors: [
+        { index: 0, path: 'events.0.account_id', message: 'Account acc_nope not found', reason: 'unknown_account' },
+        { index: 2, path: 'events.2.account_id', message: 'Account acc_nope not found', reason: 'unknown_account' },
+      ],
+    });
+    expect(publisher.publishEvent).toHaveBeenCalledTimes(1);
+    expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ accountId: 'acc_ok' }));
   });
 
-  it('allows 10 batches per account per minute, then rejects with the accounts that are over', async () => {
+  it('allows 10 batches per account per minute, then rejects that account\'s events with 429 when nothing else is queued', async () => {
     for (let i = 0; i < 10; i++) {
       const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_b', 'webhook_received'), ok('acc_b', 'api_request')] });
       expect(res.status).toBe(202);
@@ -71,7 +86,11 @@ describe('POST /ingest/batch', () => {
 
     const over = await request(app).post('/ingest/batch').send({ events: [ok('acc_b', 'sync_run')] });
     expect(over.status).toBe(429);
-    expect(over.body).toEqual({ error: 'Too many requests', details: [{ account: 'acc_b', limit: 10 }] });
+    expect(over.body.data).toEqual({
+      queued: 0,
+      failed: 1,
+      errors: [{ index: 0, path: 'events.0', message: 'Account acc_b is over its batch limit of 10 per minute', reason: 'rate_limited' }],
+    });
     expect(publisher.publishEvent).toHaveBeenCalledTimes(20);
 
     // Another account is unaffected, and single ingests for acc_b are not, either: batches have their own counter.
@@ -87,13 +106,12 @@ describe('POST /ingest/batch', () => {
     expect(res.text).not.toMatch(/ingest_rate_limited_total\{account_id="acc_b"/);
   });
 
-  it('counts a mixed batch once against every account it contains', async () => {
+  it('drops only the over-limit accounts from a mixed batch and queues the rest', async () => {
     for (let i = 0; i < 10; i++) await request(app).post('/ingest/batch').send({ events: [ok('acc_m1', 'connection_created'), ok('acc_m2', 'connection_created')] });
     const res = await request(app).post('/ingest/batch').send({ events: [ok('acc_m1', 'connection_created'), ok('acc_m2', 'connection_created'), ok('acc_m3', 'connection_created')] });
-    expect(res.status).toBe(429);
-    expect(res.body.details).toEqual([
-      { account: 'acc_m1', limit: 10 },
-      { account: 'acc_m2', limit: 10 },
-    ]);
+    expect(res.status).toBe(202);
+    expect(res.body.data.queued).toBe(1);
+    expect(res.body.data.errors.map((e: { index: number; reason: string }) => [e.index, e.reason])).toEqual([[0, 'rate_limited'], [1, 'rate_limited']]);
+    expect(publisher.publishEvent).toHaveBeenLastCalledWith(expect.objectContaining({ accountId: 'acc_m3' }));
   });
 });

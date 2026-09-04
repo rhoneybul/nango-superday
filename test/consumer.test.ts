@@ -12,14 +12,14 @@ vi.mock('../src/queue/publisher');
 /** A delivery as amqplib hands it to the consume callback (only what the handler reads). */
 const delivery = (content: Buffer) => ({ content, fields: { redelivered: false }, properties: {} }) as unknown as ConsumeMessage;
 const channel = () => ({ ack: vi.fn(), nack: vi.fn() });
-const valid = encodeEventMessage({ accountId: 'acc_1', eventName: EventName.ConnectionCreated, quantity: 1, timestamp: new Date('2026-09-01T10:00:00Z') });
+const valid = encodeEventMessage({ accountId: 'acc_1', eventName: EventName.ConnectionCreated, timestamp: new Date('2026-09-01T10:00:00Z') });
 
 describe('consumer', () => {
   it('inserts a well-formed message and acks it', async () => {
     const ch = channel();
     const msg = delivery(valid);
     await handleMessage(ch, msg);
-    expect(events.createEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'connection_created', quantity: 1, timestamp: new Date('2026-09-01T10:00:00Z') });
+    expect(events.createEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'connection_created', timestamp: new Date('2026-09-01T10:00:00Z') });
     expect(ch.ack).toHaveBeenCalledWith(msg);
     expect(ch.nack).not.toHaveBeenCalled();
   });

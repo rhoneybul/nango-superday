@@ -13,28 +13,25 @@ describe('POST /ingest', () => {
     const res = await request(app).post('/ingest').send({ account_id: 'acc_1', event_name: 'connection_created' });
 
     expect(res.status).toBe(202);
-    expect(res.body.data).toEqual({ accountId: 'acc_1', eventName: 'connection_created', quantity: 1, timestamp: expect.any(String) });
+    expect(res.body.data).toEqual({ accountId: 'acc_1', eventName: 'connection_created', timestamp: expect.any(String) });
     // No timestamp supplied → stamped with the time the API received it.
     expect(new Date(res.body.data.timestamp).getTime()).toBeGreaterThanOrEqual(before);
-    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'connection_created', quantity: 1, metadata: undefined, timestamp: expect.any(Date) });
+    expect(publisher.publishEvent).toHaveBeenCalledWith({ accountId: 'acc_1', eventName: 'connection_created', metadata: undefined, timestamp: expect.any(Date) });
     expect(events.createEvent).not.toHaveBeenCalled();
   });
 
-  it('carries quantity and metadata through to the queue', async () => {
-    const body = { account_id: 'acc_1', event_name: 'records_synced', quantity: 250, metadata: { connection_id: 'conn_42', provider: 'hubspot', model: 'Contact' } };
+  it('carries metadata through to the queue', async () => {
+    const body = { account_id: 'acc_1', event_name: 'records_synced', metadata: { connection_id: 'conn_42', provider: 'hubspot', model: 'Contact', records: 250 } };
     const res = await request(app).post('/ingest').send(body);
     expect(res.status).toBe(202);
-    expect(res.body.data).toMatchObject({ eventName: 'records_synced', quantity: 250, metadata: body.metadata });
-    expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ quantity: 250, metadata: body.metadata }));
+    expect(res.body.data).toMatchObject({ eventName: 'records_synced', metadata: body.metadata });
+    expect(publisher.publishEvent).toHaveBeenCalledWith(expect.objectContaining({ metadata: body.metadata }));
   });
 
   it.each([
-    [{ quantity: 0 }, /quantity: Too small/],
-    [{ quantity: 1.5 }, /quantity: .*expected int/],
-    [{ quantity: 'ten' }, /quantity: .*expected number/],
     [{ metadata: 'not-an-object' }, /metadata: .*expected record/],
     [{ metadata: { blob: 'x'.repeat(5000) } }, /metadata: must be at most 4096 bytes/],
-  ])('rejects bad metering fields %j', async (extra, message) => {
+  ])('rejects bad metadata %j', async (extra, message) => {
     const res = await request(app).post('/ingest').send({ account_id: 'acc_1', event_name: 'api_request', ...extra });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(message);

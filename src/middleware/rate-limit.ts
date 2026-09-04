@@ -1,9 +1,8 @@
 import rateLimit from 'express-rate-limit';
 import { config } from '../config';
-import { HttpError } from '../lib/errors';
 import { ingestBatchRateLimited, ingestBatchRateLimitedLastSeen, ingestRateLimited, ingestRateLimitedLastSeen } from '../lib/metrics';
 import { rateLimitStore } from '../lib/rate-limit-store';
-import type { IngestInput } from '../services/event.service';
+import type { BatchState, IngestInput } from '../services/event.service';
 import type { Validated } from './validation';
 
 /** Set by validateIngest, which runs before the limiter. */
@@ -38,22 +37,28 @@ export const ingestRateLimit = rateLimit({
 
 /**
  * POST /ingest/batch: INGEST_BATCH_RATE_LIMIT_PER_MINUTE batches per account per
- * minute, a batch counting once against every account it contains (keys
- * `batch:<account>` in the same store). If any account is over, the whole batch
- * is rejected with a 429 listing those accounts and nothing is queued.
- * Rejections drive the separate BatchRateLimitExceeded alert.
+ * minute, a batch counting once against every account it still has events for
+ * (keys `batch:<account>` in the same store). An account over its limit has
+ * its events moved to `errors`; other accounts' events carry on. Rejections
+ * drive the separate BatchRateLimitExceeded alert.
  */
-export const batchRateLimit: Validated<{ batch: IngestInput[] }> = async (_req, res, next) => {
+export const batchRateLimit: Validated<{ batch: BatchState }> = async (_req, res, next) => {
+  const { batch } = res.locals;
   const limit = config.ingestBatchRateLimitPerMinute;
-  const over: { account: string; limit: number }[] = [];
-  for (const account of new Set(res.locals.batch.map((e) => e.accountId))) {
+  const over = new Set<string>();
+  for (const account of new Set(batch.accepted.map((e) => e.input.accountId))) {
     const { totalHits } = await rateLimitStore.increment(`batch:${account}`);
     if (totalHits > limit) {
+      over.add(account);
       ingestBatchRateLimited.inc({ account_id: account });
       ingestBatchRateLimitedLastSeen.set({ account_id: account }, Date.now() / 1000);
-      over.push({ account, limit });
     }
   }
-  if (over.length) throw new HttpError(429, 'Too many requests', over);
+  for (const { index, input } of batch.accepted) {
+    if (over.has(input.accountId)) {
+      batch.errors.push({ index, path: `events.${index}`, message: `Account ${input.accountId} is over its batch limit of ${limit} per minute`, reason: 'rate_limited' });
+    }
+  }
+  batch.accepted = batch.accepted.filter((e) => !over.has(e.input.accountId));
   next();
 };

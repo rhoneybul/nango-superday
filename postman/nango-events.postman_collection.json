@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "nango-events",
-    "description": "Metering API. Ingest single events or batches (queued, 202), see them rejected when invalid, and query them raw or aggregated per time bucket. Events carry a quantity (units of usage) and optional metadata for billing. Set `baseUrl` if the API is not on localhost:3000; `accountId` must be a seeded account (acc_acme, acc_globex, acc_initech, acc_umbrella, acc_hooli).",
+    "description": "Metering API. Ingest single events or batches (queued, 202), see them rejected when invalid, and query them raw or aggregated per time bucket. Events carry optional metadata for billing. Timestamps and query ranges are computed per request (collection pre-request script) so the queries always cover today. Set `baseUrl` if the API is not on localhost:3000; `accountId` must be a seeded account.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -28,7 +28,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"queued with quantity 1 and the metadata\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"connection_created\"); pm.expect(d.quantity).to.eql(1); pm.expect(d.metadata.provider).to.eql(\"hubspot\"); });"
+                  "pm.test(\"queued with the metadata\", () => { const d = pm.response.json().data; pm.expect(d.eventName).to.eql(\"connection_created\"); pm.expect(d.metadata.provider).to.eql(\"hubspot\"); });"
                 ]
               }
             }
@@ -58,7 +58,7 @@
           }
         },
         {
-          "name": "Records synced (quantity = 250 records)",
+          "name": "Records synced (metadata with the record count)",
           "event": [
             {
               "listen": "test",
@@ -66,7 +66,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"250 units of usage\", () => pm.expect(pm.response.json().data.quantity).to.eql(250));"
+                  "pm.test(\"metadata kept\", () => pm.expect(pm.response.json().data.metadata.records).to.eql(250));"
                 ]
               }
             }
@@ -90,7 +90,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"records_synced\",\n  \"quantity\": 250,\n  \"timestamp\": \"2026-09-01T10:15:00Z\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"provider\": \"hubspot\",\n    \"model\": \"Contact\",\n    \"sync\": \"contacts\"\n  }\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"records_synced\",\n  \"timestamp\": \"{{nowIso}}\",\n  \"metadata\": {\n    \"connection_id\": \"conn_42\",\n    \"provider\": \"hubspot\",\n    \"model\": \"Contact\",\n    \"records\": 250\n  }\n}"
             },
             "description": ""
           }
@@ -104,7 +104,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"epoch ms is accepted\", () => pm.expect(pm.response.json().data.timestamp).to.eql(\"2026-09-01T10:15:00.000Z\"));"
+                  "pm.test(\"epoch ms is accepted\", () => pm.expect(new Date(pm.response.json().data.timestamp).getTime()).to.be.above(Date.now() - 60000));"
                 ]
               }
             }
@@ -128,7 +128,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"timestamp\": 1788257700000,\n  \"metadata\": {\n    \"provider\": \"salesforce\",\n    \"endpoint\": \"/services/data/v60.0/query\"\n  }\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"timestamp\": {{nowMs}},\n  \"metadata\": {\n    \"provider\": \"salesforce\",\n    \"endpoint\": \"/services/data/v60.0/query\"\n  }\n}"
             },
             "description": ""
           }
@@ -137,7 +137,7 @@
     },
     {
       "name": "Batch",
-      "description": "POST /ingest/batch: up to 100 events in one request, each with a required timestamp. Accepted or rejected as a whole; 10 batches per account per minute.",
+      "description": "POST /ingest/batch: up to 100 events in one request, each with a required timestamp. Valid events are queued; the response says how many (`queued`) and lists every event that was not, with its index and why (`errors`). 202 if anything was queued, 400/429 if nothing was. 10 batches per account per minute.",
       "item": [
         {
           "name": "Batch of 3 (one account, mixed usage)",
@@ -148,7 +148,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 202\", () => pm.response.to.have.status(202));",
-                  "pm.test(\"3 queued\", () => pm.expect(pm.response.json().data).to.eql({ queued: 3 }));"
+                  "pm.test(\"all 3 queued, none failed\", () => pm.expect(pm.response.json().data).to.eql({ queued: 3, failed: 0, errors: [] }));"
                 ]
               }
             }
@@ -173,7 +173,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\",\n      \"metadata\": {\n        \"connection_id\": \"conn_42\",\n        \"sync\": \"contacts\"\n      }\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"records_synced\",\n      \"quantity\": 1200,\n      \"timestamp\": \"2026-09-01T10:00:05Z\",\n      \"metadata\": {\n        \"connection_id\": \"conn_42\",\n        \"model\": \"Contact\"\n      }\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T10:00:06Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"{{nowIso}}\",\n      \"metadata\": {\n        \"connection_id\": \"conn_42\",\n        \"sync\": \"contacts\"\n      }\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"records_synced\",\n      \"timestamp\": \"{{nowIso}}\",\n      \"metadata\": {\n        \"connection_id\": \"conn_42\",\n        \"model\": \"Contact\"\n      }\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    }\n  ]\n}"
             },
             "description": ""
           }
@@ -212,7 +212,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_acme\",\n      \"event_name\": \"connection_created\",\n      \"timestamp\": \"2026-09-01T11:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T11:01:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"2026-09-01T11:02:00Z\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"webhook_received\",\n      \"timestamp\": \"2026-09-01T11:03:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_acme\",\n      \"event_name\": \"connection_created\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_hooli\",\n      \"event_name\": \"webhook_received\",\n      \"timestamp\": \"{{nowIso}}\"\n    }\n  ]\n}"
             },
             "description": "Counts once against each account's batch allowance."
           }
@@ -251,21 +251,22 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"2026-09-01T12:00:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"acc_globex\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    }\n  ]\n}"
             },
             "description": ""
           }
         },
         {
-          "name": "Batch with invalid events (all errors listed)",
+          "name": "Batch with some valid and some failing events (partial success)",
           "event": [
             {
               "listen": "test",
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"one error per problem, by event index\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"events.1.event_name\", \"events.2.timestamp\"]));"
+                  "pm.test(\"status 202: something was queued\", () => pm.response.to.have.status(202));",
+                  "pm.test(\"2 queued, 3 failed\", () => { const d = pm.response.json().data; pm.expect(d.queued).to.eql(2); pm.expect(d.failed).to.eql(3); });",
+                  "pm.test(\"each failure names the event index and the reason\", () => { const e = pm.response.json().data.errors; pm.expect(e.map(x => [x.index, x.reason])).to.eql([[1, \"invalid\"], [3, \"invalid\"], [4, \"unknown_account\"]]); });"
                 ]
               }
             }
@@ -290,9 +291,9 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"connection_created\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"page_view\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"api_request\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"sync_run\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"page_view\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"records_synced\",\n      \"timestamp\": \"{{nowIso}}\"\n    },\n    {\n      \"account_id\": \"{{accountId}}\",\n      \"event_name\": \"api_request\"\n    },\n    {\n      \"account_id\": \"acc_unknown\",\n      \"event_name\": \"api_request\",\n      \"timestamp\": \"{{nowIso}}\"\n    }\n  ]\n}"
             },
-            "description": "Nothing from the batch is queued; every problem comes back at once."
+            "description": "Events 0 and 2 are queued. Event 1 has an unknown event name, event 3 is missing its timestamp, event 4 belongs to an unknown account: all three come back in errors with their index."
           }
         }
       ]
@@ -415,7 +416,7 @@
           }
         },
         {
-          "name": "Bad metering fields (quantity 0, metadata not an object)",
+          "name": "Bad metadata (not an object)",
           "event": [
             {
               "listen": "test",
@@ -423,7 +424,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 400\", () => pm.response.to.have.status(400));",
-                  "pm.test(\"both fields listed\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"quantity\", \"metadata\"]));"
+                  "pm.test(\"metadata listed\", () => pm.expect(pm.response.json().details.map(d => d.path)).to.eql([\"metadata\"]));"
                 ]
               }
             }
@@ -447,7 +448,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"quantity\": 0,\n  \"metadata\": \"conn_42\"\n}"
+              "raw": "{\n  \"account_id\": \"{{accountId}}\",\n  \"event_name\": \"api_request\",\n  \"metadata\": \"conn_42\"\n}"
             },
             "description": ""
           }
@@ -470,7 +471,7 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                      "pm.test(\"newest first, with paging meta\", () => { const b = pm.response.json(); pm.expect(b.data).to.be.an(\"array\"); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
+                      "pm.test(\"returns the events ingested above, newest first\", () => { const b = pm.response.json(); pm.expect(b.data.length).to.be.at.least(1); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
                     ]
                   }
                 }
@@ -505,7 +506,7 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                      "pm.test(\"only sync runs\", () => pm.response.json().data.forEach(e => pm.expect(e.eventName).to.eql(\"sync_run\")));"
+                      "pm.test(\"only connection_created, at least one\", () => { const d = pm.response.json().data; pm.expect(d.length).to.be.at.least(1); d.forEach(e => pm.expect(e.eventName).to.eql(\"connection_created\")); });"
                     ]
                   }
                 }
@@ -514,7 +515,7 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/events?account={{accountId}}&event=sync_run",
+                  "raw": "{{baseUrl}}/events?account={{accountId}}&event=connection_created",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -528,7 +529,7 @@
                     },
                     {
                       "key": "event",
-                      "value": "sync_run"
+                      "value": "connection_created"
                     }
                   ]
                 },
@@ -536,7 +537,7 @@
               }
             },
             {
-              "name": "By time range",
+              "name": "By time range (today)",
               "event": [
                 {
                   "listen": "test",
@@ -544,7 +545,7 @@
                     "type": "text/javascript",
                     "exec": [
                       "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                      "pm.test(\"everything inside the range\", () => pm.response.json().data.forEach(e => { pm.expect(new Date(e.timestamp)).to.be.at.least(new Date(\"2026-09-01T00:00:00Z\")); pm.expect(new Date(e.timestamp)).to.be.at.most(new Date(\"2026-09-01T23:59:59Z\")); }));"
+                      "pm.test(\"today's events, all inside the range\", () => { const d = pm.response.json().data; pm.expect(d.length).to.be.at.least(1); d.forEach(e => { pm.expect(new Date(e.timestamp)).to.be.at.least(new Date(pm.variables.get(\"todayStart\"))); pm.expect(new Date(e.timestamp)).to.be.at.most(new Date(pm.variables.get(\"todayEnd\"))); }); });"
                     ]
                   }
                 }
@@ -553,7 +554,7 @@
                 "method": "GET",
                 "header": [],
                 "url": {
-                  "raw": "{{baseUrl}}/events?from=2026-09-01T00:00:00Z&to=2026-09-01T23:59:59Z",
+                  "raw": "{{baseUrl}}/events?from={{todayStart}}&to={{todayEnd}}",
                   "host": [
                     "{{baseUrl}}"
                   ],
@@ -563,21 +564,21 @@
                   "query": [
                     {
                       "key": "from",
-                      "value": "2026-09-01T00:00:00Z"
+                      "value": "{{todayStart}}"
                     },
                     {
                       "key": "to",
-                      "value": "2026-09-01T23:59:59Z"
+                      "value": "{{todayEnd}}"
                     }
                   ]
                 },
-                "description": "from/to are inclusive; ISO-8601 or epoch milliseconds."
+                "description": "from/to are today's UTC midnight to tomorrow's, computed per request."
               }
             }
           ]
         },
         {
-          "name": "Fetch window (counts per hour over a day)",
+          "name": "Fetch window (counts per hour, today)",
           "event": [
             {
               "listen": "test",
@@ -585,7 +586,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"24 hourly buckets with count and quantity, empty ones as 0\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.meta.total).to.eql(24); b.buckets.forEach(x => pm.expect(x).to.have.keys(\"windowStart\", \"count\", \"quantity\")); });"
+                  "pm.test(\"24 hourly buckets for today, at least one non-empty\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.meta.total).to.eql(24); pm.expect(b.buckets.some(x => x.count > 0)).to.be.true; });"
                 ]
               }
             }
@@ -594,7 +595,7 @@
             "method": "GET",
             "header": [],
             "url": {
-              "raw": "{{baseUrl}}/events?account={{accountId}}&window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
+              "raw": "{{baseUrl}}/events?account={{accountId}}&window=1h&from={{todayStart}}&to={{todayEnd}}",
               "host": [
                 "{{baseUrl}}"
               ],
@@ -612,11 +613,11 @@
                 },
                 {
                   "key": "from",
-                  "value": "2026-09-01T00:00:00Z"
+                  "value": "{{todayStart}}"
                 },
                 {
                   "key": "to",
-                  "value": "2026-09-02T00:00:00Z"
+                  "value": "{{todayEnd}}"
                 }
               ]
             },
@@ -675,7 +676,7 @@
               "script": {
                 "type": "text/javascript",
                 "exec": [
-                  "pm.test(\"202 for the first 10 batches in a minute, then 429\", () => pm.expect([202, 429]).to.include(pm.response.code));"
+                  "pm.test(\"202 for the first 10 batches in a minute, then 429 with the event listed as rate_limited\", () => { pm.expect([202, 429]).to.include(pm.response.code); if (pm.response.code === 429) pm.expect(pm.response.json().data.errors[0].reason).to.eql(\"rate_limited\"); });"
                 ]
               }
             }
@@ -700,12 +701,30 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_initech\",\n      \"event_name\": \"webhook_received\",\n      \"timestamp\": \"2026-09-01T10:00:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"events\": [\n    {\n      \"account_id\": \"acc_initech\",\n      \"event_name\": \"webhook_received\",\n      \"timestamp\": \"{{nowIso}}\"\n    }\n  ]\n}"
             },
             "description": "10 batches per account per minute, separate from the single-ingest limit and with its own alert."
           }
         }
       ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Dates are computed per request so the demo queries always cover today's events.",
+          "const now = new Date();",
+          "const start = new Date(now); start.setUTCHours(0, 0, 0, 0);",
+          "const end = new Date(start.getTime() + 24 * 3600 * 1000);",
+          "pm.variables.set('nowIso', now.toISOString());",
+          "pm.variables.set('nowMs', String(now.getTime()));",
+          "pm.variables.set('todayStart', start.toISOString());",
+          "pm.variables.set('todayEnd', end.toISOString());"
+        ]
+      }
     }
   ]
 }

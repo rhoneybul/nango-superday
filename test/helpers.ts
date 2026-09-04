@@ -19,7 +19,6 @@ export function makeEvent(overrides: Partial<EventRecord> = {}): EventRecord {
     id: '1',
     accountId: 'acc_1',
     eventName: 'connection_created',
-    quantity: 1,
     metadata: null,
     timestamp: new Date('2026-09-01T10:00:00.000Z'),
     createdAt: new Date('2026-09-01T10:00:00.000Z'),

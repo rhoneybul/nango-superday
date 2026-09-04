@@ -17,8 +17,6 @@ import { publishEvent } from '../queue/publisher';
 export interface IngestInput {
   accountId: string;
   eventName: EventName;
-  /** Units of usage this event represents (default 1). */
-  quantity: number;
   /** Free-form context for billing or debugging. */
   metadata?: Record<string, unknown>;
   /** Omitted → the time the API received the event. */
@@ -32,10 +30,36 @@ export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
   return message;
 }
 
-/** Publishes every event of an already-validated batch. Returns how many were queued. */
-export async function ingestBatch(inputs: IngestInput[]): Promise<{ queued: number }> {
-  await Promise.all(inputs.map((input) => ingestEvent(input)));
-  return { queued: inputs.length };
+/**
+ * A batch in flight. Each middleware in the chain moves events it rejects
+ * from `accepted` to `errors`; whatever is still accepted at the end is queued.
+ * So one request can partly succeed: clients get `queued` plus one error per
+ * event that did not make it, with its position in the batch they sent.
+ */
+export interface BatchState {
+  accepted: { index: number; input: IngestInput }[];
+  errors: BatchError[];
+}
+
+export interface BatchError {
+  index: number;
+  /** `events.<index>.<field>` for a bad field, `events.<index>` for a whole event. */
+  path: string;
+  message: string;
+  reason: 'invalid' | 'unknown_account' | 'rate_limited';
+}
+
+export interface BatchResult {
+  queued: number;
+  failed: number;
+  errors: BatchError[];
+}
+
+/** Publishes every still-accepted event of a batch and reports the outcome, errors in batch order. */
+export async function ingestBatch(batch: BatchState): Promise<BatchResult> {
+  await Promise.all(batch.accepted.map(({ input }) => ingestEvent(input)));
+  const errors = [...batch.errors].sort((a, b) => a.index - b.index);
+  return { queued: batch.accepted.length, failed: errors.length, errors };
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +94,7 @@ export interface EventListing {
 export interface EventWindowCounts {
   window: string;
   windowSeconds: number;
-  /** One entry per bucket from `from` to `to`, oldest first, empty buckets as 0: a 24h range at 1h is 24 values. `count` is events, `quantity` is billable usage. */
+  /** One entry per bucket from `from` to `to`, oldest first, empty buckets as 0: a 24h range at 1h is 24 values. */
   buckets: WindowBucket[];
   /** `total` is the number of buckets in the range; `buckets` is the page `offset`..`offset + limit`. */
   meta: { total: number; limit: number; offset: number };
@@ -113,7 +137,7 @@ function fillEmptyBuckets(counted: WindowBucket[], from: Date, to: Date, windowS
   const byStart = new Map(counted.map((b) => [b.windowStart.getTime(), b]));
   const firstStart = events.BUCKET_ORIGIN_MS + Math.floor((from.getTime() - events.BUCKET_ORIGIN_MS) / windowMs) * windowMs;
   for (let start = firstStart; start < to.getTime(); start += windowMs) {
-    if (!byStart.has(start)) byStart.set(start, { windowStart: new Date(start), count: 0, quantity: 0 });
+    if (!byStart.has(start)) byStart.set(start, { windowStart: new Date(start), count: 0 });
   }
   return [...byStart.values()].sort((a, b) => a.windowStart.getTime() - b.windowStart.getTime());
 }

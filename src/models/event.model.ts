@@ -11,8 +11,6 @@ export interface EventRecord {
   id: string;
   accountId: string;
   eventName: string;
-  /** Units of usage (records, requests, …); billing sums it. */
-  quantity: number;
   /** Free-form context for billing or debugging, or null. */
   metadata: Record<string, unknown> | null;
   timestamp: Date;
@@ -23,7 +21,6 @@ export interface EventRecord {
 export interface NewEvent {
   accountId: string;
   eventName: EventName;
-  quantity: number;
   metadata?: Record<string, unknown>;
   timestamp: Date;
 }
@@ -36,7 +33,7 @@ export interface EventWhere {
 }
 
 /** BigInt ids are not JSON-serialisable, so they go out as strings. */
-function toRecord(row: { id: bigint; accountId: string; eventName: string; quantity: number; metadata: unknown; timestamp: Date; createdAt: Date }): EventRecord {
+function toRecord(row: { id: bigint; accountId: string; eventName: string; metadata: unknown; timestamp: Date; createdAt: Date }): EventRecord {
   return { ...row, id: row.id.toString(), metadata: (row.metadata as Record<string, unknown> | null) ?? null };
 }
 
@@ -64,20 +61,16 @@ export async function countEvents(where: EventWhere): Promise<number> {
 
 export interface WindowBucket {
   windowStart: Date;
-  /** Number of events in the bucket. */
   count: number;
-  /** Sum of the events' `quantity`: the billable usage in the bucket. */
-  quantity: number;
 }
 
 /** Bucket alignment origin: 1970-01-05 00:00 UTC, a Monday, so 1w buckets start on Mondays and 1h/1d stay on the hour/midnight UTC. */
 export const BUCKET_ORIGIN_MS = Date.UTC(1970, 0, 5);
 
 /**
- * Events and usage (sum of `quantity`) per fixed-size time bucket of
- * `windowSeconds`, aligned to BUCKET_ORIGIN_MS via Postgres `date_bin`. Only
- * buckets with events come back; the service fills the gaps. The validator
- * bounds the number of buckets.
+ * Counts events per fixed-size time bucket of `windowSeconds`, aligned to
+ * BUCKET_ORIGIN_MS via Postgres `date_bin`. Only buckets with events come back;
+ * the service fills the gaps. The validator bounds the number of buckets.
  */
 export async function countEventsByWindow(where: EventWhere, windowSeconds: number): Promise<WindowBucket[]> {
   const conditions: Prisma.Sql[] = [];
@@ -88,14 +81,13 @@ export async function countEventsByWindow(where: EventWhere, windowSeconds: numb
   const whereSql = conditions.length ? Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}` : Prisma.empty;
 
   const interval = `${windowSeconds} seconds`;
-  const rows = await prisma.$queryRaw<{ window_start: Date; count: bigint; quantity: bigint }[]>`
+  const rows = await prisma.$queryRaw<{ window_start: Date; count: bigint }[]>`
     SELECT date_bin(${interval}::interval, "timestamp", TIMESTAMPTZ '1970-01-05 00:00:00+00') AS window_start,
-           COUNT(*)::bigint AS count,
-           SUM(quantity)::bigint AS quantity
+           COUNT(*)::bigint AS count
     FROM events
     ${whereSql}
     GROUP BY window_start
     ORDER BY window_start ASC
   `;
-  return rows.map((r) => ({ windowStart: r.window_start, count: Number(r.count), quantity: Number(r.quantity) }));
+  return rows.map((r) => ({ windowStart: r.window_start, count: Number(r.count) }));
 }

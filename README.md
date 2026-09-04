@@ -45,16 +45,15 @@ To add one, add the id to the list and run `npm run seed`.
 ### `POST /ingest` → 202
 
 ```json
-{ "account_id": "acc_acme", "event_name": "records_synced", "quantity": 250,
-  "metadata": { "connection_id": "conn_42", "provider": "hubspot", "model": "Contact" },
+{ "account_id": "acc_acme", "event_name": "records_synced",
+  "metadata": { "connection_id": "conn_42", "provider": "hubspot", "model": "Contact", "records": 250 },
   "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
 | Field        | Meaning                                                                                              |
 |--------------|------------------------------------------------------------------------------------------------------|
 | `event_name` | What was metered: `api_request`, `sync_run`, `records_synced`, `action_executed`, `webhook_received`, `connection_created` |
-| `quantity`   | Units of usage the event represents (records synced, requests, …). Integer ≥ 1, default 1. Billing sums it |
-| `metadata`   | Optional object with anything billing or debugging needs (connection id, provider, model, …). Up to 4 KB |
+| `metadata`   | Optional object with anything billing or debugging needs (connection id, provider, model, record count, …). Up to 4 KB |
 | `timestamp`  | Optional, defaults to now, may not be in the future                                                 |
 
 The event is published to the queue and stored by the consumer a moment later; the response echoes what was queued.
@@ -63,12 +62,18 @@ The event is published to the queue and stored by the consumer a moment later; t
 
 ```json
 { "events": [ { "account_id": "acc_acme", "event_name": "sync_run", "timestamp": "2026-09-01T10:00:00Z", "metadata": { "connection_id": "conn_42" } },
-              { "account_id": "acc_acme", "event_name": "records_synced", "quantity": 1200, "timestamp": "2026-09-01T10:00:05Z" } ] }
+              { "account_id": "acc_acme", "event_name": "records_synced", "timestamp": "2026-09-01T10:00:05Z", "metadata": { "records": 1200 } } ] }
 ```
 
-1 to 100 events, each with a required `timestamp`. The batch is accepted or rejected as a whole: any problem returns
-`400` with one `details` entry per problem (`events.<index>.<field>`), including unknown accounts.
-Response: `{ "data": { "queued": n } }`.
+1 to 100 events, each with a required `timestamp`. Valid events are queued; each one that is not comes back in `errors`
+with its position in the batch and why (`invalid`, `unknown_account` or `rate_limited`):
+
+```json
+{ "data": { "queued": 2, "failed": 1,
+            "errors": [ { "index": 1, "path": "events.1.event_name", "message": "Invalid option: …", "reason": "invalid" } ] } }
+```
+
+`202` when at least one event was queued, `400` when none were, `429` when none were because of the rate limit.
 
 ### `GET /events` → 200
 
@@ -86,14 +91,13 @@ Without `window`: raw events, newest first.
 { "data": [ … ], "meta": { "total": 2, "limit": 100, "offset": 0 }, "filters": { "account": "acc_acme" } }
 ```
 
-With `window`: one row per bucket, oldest first, with `count` (events) and `quantity` (billable usage, the sum of the
-events' `quantity`). Buckets align to the clock (an hour bucket starts on the hour) and every bucket in the range is
-present, so 24 hours at `window=1h` is exactly 24 values, empty ones as `0`.
+With `window`: one count per bucket, oldest first. Buckets align to the clock (an hour bucket starts on the hour) and
+every bucket in the range is present, so 24 hours at `window=1h` is exactly 24 values, empty ones as `0`.
 More than 10,000 buckets is a `400`.
 
 ```json
 { "window": "1h", "windowSeconds": 3600,
-  "buckets": [ { "windowStart": "2026-09-01T00:00:00.000Z", "count": 0, "quantity": 0 }, { "windowStart": "2026-09-01T01:00:00.000Z", "count": 2, "quantity": 1450 }, … ],
+  "buckets": [ { "windowStart": "2026-09-01T00:00:00.000Z", "count": 0 }, { "windowStart": "2026-09-01T01:00:00.000Z", "count": 2 }, … ],
   "meta": { "total": 24, "limit": 100, "offset": 0 }, "filters": { … } }
 ```
 
@@ -157,7 +161,8 @@ Prints successful / rate limited / failed counts and p50/p95/p99 latency. Config
 ## Postman
 
 `postman/nango-events.postman_collection.json`: successful ingests and batches, the invalid cases, queries (raw and windowed)
-and the two rate-limit requests to run repeatedly. Set `baseUrl` if the API is not on `localhost:3000`.
+and the two rate-limit requests to run repeatedly. Timestamps and query ranges are computed per request, so the queries
+always cover today's events. Set `baseUrl` if the API is not on `localhost:3000`.
 
 ## Tests
 
