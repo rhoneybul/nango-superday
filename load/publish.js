@@ -10,7 +10,7 @@
  *       { "account_id": "acc_acme", "event_name": "signup", "rps": 20 },
  *       { "account_id": "acc_globex", "event_name": "purchase", "rps": 5 }
  *     ],
- *     "expectedStatuses": [201],
+ *     "expectedStatuses": [202],
  *     "thresholds": { "p95Ms": 250, "maxErrorRate": 0.01 }
  *   }
  *
@@ -26,7 +26,7 @@
  *        TARGET  overrides `target` from the file (used by docker compose: http://api:3000)
  *
  * Everything below `options` is plain k6. `handleSummary` at the bottom replaces
- * k6's default report with a short one: successful / rate limited / unknown account / failed
+ * k6's default report with a short one: accepted / rate limited / unknown account / failed
  * counts, one latency line, and the threshold results.
  */
 import http from 'k6/http';
@@ -83,7 +83,7 @@ function parseConfig(raw) {
     if (cfg.expectedStatuses !== undefined) {
       const ok = Array.isArray(cfg.expectedStatuses) && cfg.expectedStatuses.length > 0
         && cfg.expectedStatuses.every((n) => Number.isInteger(n) && n >= 100 && n <= 599);
-      if (!ok) problems.push('expectedStatuses: must be a non-empty array of HTTP status codes, e.g. [201, 429]');
+      if (!ok) problems.push('expectedStatuses: must be a non-empty array of HTTP status codes, e.g. [202, 429]');
     }
     if (cfg.thresholds !== undefined) {
       if (!isObject(cfg.thresholds)) problems.push('thresholds: must be an object');
@@ -99,7 +99,7 @@ function parseConfig(raw) {
     }
   }
   if (problems.length) throw new Error(`${CONFIG_PATH}:\n  - ${problems.join('\n  - ')}`);
-  return Object.assign({ thresholds: {}, expectedStatuses: [201] }, cfg);
+  return Object.assign({ thresholds: {}, expectedStatuses: [202] }, cfg);
 }
 
 // ---------------------------------------------------------------------------
@@ -155,19 +155,19 @@ export const options = {
 };
 
 // ---------------------------------------------------------------------------
-// Metrics: every response is exactly one of successful / rate limited / unknown account / failed
+// Metrics: every response is exactly one of accepted / rate limited / unknown account / failed
 // (failed = any other status, including 0 for a connection error or timeout)
 // ---------------------------------------------------------------------------
 
 const outcomes = {
-  successful: new Counter('successful'),
+  accepted: new Counter('accepted'),
   rate_limited: new Counter('rate_limited'),
   unknown_account: new Counter('unknown_account'),
   failed: new Counter('failed'),
 };
 
 function outcome(status) {
-  if (status === 201) return 'successful';
+  if (status === 202) return 'accepted';
   if (status === 429) return 'rate_limited';
   if (status === 404) return 'unknown_account';
   return 'failed';
@@ -225,7 +225,7 @@ export function handleSummary(data) {
     '',
     `Load summary: ${total} requests to ${TARGET}/ingest over ${config.duration} (${(m('http_reqs').rate || 0).toFixed(2)}/s)`,
     '',
-    line('successful (201)', 'successful'),
+    line('accepted (202)', 'accepted'),
     line('rate limited (429)', 'rate_limited'),
     line('unknown account (404)', 'unknown_account'),
     line('failed (other)', 'failed'),

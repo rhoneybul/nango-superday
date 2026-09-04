@@ -1,6 +1,13 @@
 # nango-events
 
-Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
+Barebones event ingestion API: Express 5 + RabbitMQ + Prisma 7 + Postgres.
+
+```
+POST /ingest ─▶ API ─publish─▶ RabbitMQ `events` ─▶ consumer ─insert─▶ Postgres ◀─ GET /events
+                202                    │ bad message / 5 failed deliveries
+                                       ▼
+                                  `events.dlq`
+```
 
 ## Run with Docker
 
@@ -8,18 +15,19 @@ Barebones event ingestion API: Express 5 + Prisma 7 + Postgres.
 docker compose up --build
 ```
 
-Starts Postgres on `:5432`, Redis on `:6379`, Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources) and the API on `:3000`. Migrations are applied and the [accounts](#accounts) seeded automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`.
+Starts Postgres on `:5432`, Redis on `:6379`, RabbitMQ on `:5672` (management UI `:15672`, `nango`/`nango`), Prometheus on `:9090`, Grafana on `:3001` (login `admin`/`admin`, with the events database and Prometheus pre-configured as datasources), the API on `:3000` and the consumer. Migrations are applied and the [accounts](#accounts) seeded automatically on startup. Host ports can be overridden with `DB_PORT`, `REDIS_PORT`, `RABBITMQ_PORT`, `RABBITMQ_MANAGEMENT_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`, `API_PORT`. `--scale consumer=3` runs more consumers.
 For Slack alerts, put a Slack bot token in `.env` as `SLACK_BOT_TOKEN` before starting. The bot needs the `chat:write` scope and must be invited to `#superday-rob` (see [Alerting](#alerting)).
 
 ## Run locally
 
 ```bash
 cp .env.example .env         # DATABASE_URL points at the compose Postgres by default
-docker compose up -d db
+docker compose up -d db rabbitmq
 npm install                  # also runs `prisma generate`
 npx prisma migrate deploy
 npm run seed                 # upsert the seeded accounts (src/models/seeded-accounts.ts)
-npm run dev
+npm run dev                  # the API
+npm run dev:consumer         # the consumer, in another terminal
 ```
 
 ## Accounts
@@ -50,7 +58,9 @@ account, add it to the list and run the seed; it is live within 30s.
 { "account_id": "acc_1", "event_name": "signup", "timestamp": "2026-09-01T10:15:00Z" }
 ```
 
-`account_id` must be a seeded [account](#accounts) (`404` otherwise). `event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to `NOW()` in the database; it may not be in the future. Returns `201` with the stored event.
+`account_id` must be a seeded [account](#accounts) (`404` otherwise). `event_name` must be one of `signup`, `login`, `logout`, `purchase` (the `EventName` enum in `src/models/event-name.ts`). `timestamp` is optional and defaults to the time the API received the event; it may not be in the future.
+
+Returns `202` with the event as queued (`{ "data": { "accountId", "eventName", "timestamp" } }`): the API publishes it to RabbitMQ and the consumer inserts it into Postgres a moment later. See [Queue](#queue).
 
 Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `account_id` + `event_name` pair, so one noisy event never blocks an account's other events. Over the limit returns `429 { "error": "Too many requests" }` with standard `RateLimit-*` headers. Counters are stored in Redis (`REDIS_URL`); without it they are kept in process memory. The account check runs before the limiter, so unknown accounts never consume quota. Every rejection is counted in the `ingest_rate_limited_total` metric, which drives the `RateLimitExceeded` alert (see [Alerting](#alerting)).
 
@@ -85,6 +95,12 @@ Includes `http_requests_total` and `http_request_duration_seconds` (labels `meth
 Prometheus exposition of the API's metrics: `ingest_rate_limited_total{account_id,event_name}` (rejections), `ingest_rate_limited_last_seen_timestamp_seconds{account_id,event_name}` (time of the latest rejection), plus Node process defaults. Scraped every 10s by the `prometheus` compose service.
 
 Invalid input returns `400 { "error": "field: reason; …", "details": [{ "path": "field", "message": "reason" }] }`; an unknown account returns `404 { "error": "Account acc_x not found" }`. Every response carries an `X-Request-Id` header (your own is echoed back if you send one), and the same id appears on every JSON log line for that request.
+
+## Queue
+
+`POST /ingest` publishes each event as a JSON message to the `events` exchange (confirmed by the broker before the `202`); `src/consumer.ts` reads the `events` queue and inserts rows, acknowledging each message after its insert. The topology (`src/queue/topology.ts`) is asserted by both on connect, so a fresh broker needs no setup, and both reconnect on their own if the broker restarts.
+
+Dead-letter queue: a message the consumer cannot decode is rejected and goes straight to `events.dlq`. A message whose insert fails (Postgres down, …) is requeued and redelivered; after 5 deliveries the broker moves it to `events.dlq` itself. Inspect dead-lettered messages in the management UI (`:15672` → Queues → `events.dlq`); once the cause is fixed, use its *Move messages* section (shovel plugin) to put them back on the `events` queue, or purge them. The **Event Queue** Grafana dashboard shows the depth of both queues, messages in flight, consumers attached and message rates (from RabbitMQ's Prometheus plugin).
 
 ## Alerting
 
@@ -125,13 +141,16 @@ src/
   routes.ts      URL → validation middleware → controller wiring
   middleware/    request id, request logging, input validation (zod), account check (404), rate limiting
   controllers/   HTTP concerns: status codes, response shape
-  services/      business logic (filter building, model calls) on validated input; cached account lookups
+  services/      business logic on validated input: ingest publishes to the queue, listing queries the model; cached account lookups
   models/        Prisma data access (events, accounts tables), the seeded account list
+  queue/         RabbitMQ topology (exchange, queue, dead-letter queue), message codec, the API's publisher
+  consumer.ts    the consumer service: queue → Postgres
   lib/           prisma client, shared Redis client + cache, error types/handler, pino logger, Prometheus metrics registry
   generated/     Prisma client output (gitignored, created by `prisma generate`)
   seed.ts        upserts the seeded accounts (`npm run seed`; run by compose on start)
 prisma/          schema + migrations
-prometheus/      scrape config (the API's /metrics)
+rabbitmq/        broker config mounted by compose (enabled plugins, per-queue Prometheus metrics)
+prometheus/      scrape config (the API's /metrics, RabbitMQ)
 grafana/         Grafana provisioning: datasources (Postgres, Prometheus); alert rules, contact points, notification policies
 load/            k6 load generator: publish.js + JSON run configs (see load/README.md)
 test/            vitest + supertest against the real app, model module mocked with vi.mock
@@ -141,7 +160,7 @@ Indexes on `events`: `(account_id, timestamp)`, `(account_id, event_name, timest
 
 ## Dashboards
 
-Grafana (`:3001`) comes with two provisioned dashboards: **API HTTP** (requests/s, latency, error rate, rate-limit hits, from Prometheus) and **Events** (events over time, by name, top accounts, latest events, straight from Postgres). Source: `grafana/provisioning/dashboards/*.json`.
+Grafana (`:3001`) comes with three provisioned dashboards: **Event Queue** (queue and dead-letter queue depth, in-flight messages, consumers, message rates), **API HTTP** (requests/s, latency, error rate, rate-limit hits, from Prometheus) and **Events** (events over time, by name, top accounts, latest events, straight from Postgres). Source: `grafana/provisioning/dashboards/*.json`.
 
 ## Postman
 
@@ -153,4 +172,4 @@ Import `postman/nango-events.postman_collection.json`. It covers the health and 
 npm test
 ```
 
-No database or Redis required — the model layer is stubbed (events and accounts) and the account cache runs in memory.
+No database, Redis or RabbitMQ required — the model layer (events, accounts) and the queue publisher are stubbed, and the account cache runs in memory. `test/consumer.test.ts` calls the consumer's message handler with a fake channel.

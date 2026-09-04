@@ -24,11 +24,14 @@ function logLevel(fallback: LogLevel): LogLevel {
 }
 
 if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required');
+if (!env.RABBITMQ_URL) throw new Error('RABBITMQ_URL is required');
 
 export const config = {
   env: env.NODE_ENV ?? 'development',
   port: integer('PORT', 3000),
   databaseUrl: env.DATABASE_URL,
+  /** RabbitMQ: POST /ingest publishes events here, src/consumer.ts inserts them into Postgres. */
+  rabbitmqUrl: env.RABBITMQ_URL,
   logLevel: logLevel('info'),
   /** Optional. When unset, rate-limit counters are kept in memory instead. */
   redisUrl: env.REDIS_URL || undefined,

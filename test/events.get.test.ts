@@ -5,6 +5,7 @@ import { events, makeEvent } from './helpers';
 
 vi.mock('../src/models/event.model');
 vi.mock('../src/models/account.model');
+vi.mock('../src/queue/publisher');
 
 // vitest.config.ts sets EVENTS_DEFAULT_LIMIT=50 and EVENTS_MAX_LIMIT=500 for these tests.
 

@@ -7,9 +7,10 @@ import { ingestEvent, listEvents, type IngestInput, type ListEventsInput } from 
  * No try/catch needed: Express 5 forwards rejected promises to `errorHandler`.
  */
 
+/** 202: the event is queued, not yet in the database. */
 export const ingest: Validated<{ ingest: IngestInput }> = async (_req, res) => {
-  const event = await ingestEvent(res.locals.ingest);
-  res.status(201).json({ data: event });
+  const queued = await ingestEvent(res.locals.ingest);
+  res.status(202).json({ data: queued });
 };
 
 export const list: Validated<{ listEvents: ListEventsInput }> = async (_req, res) => {

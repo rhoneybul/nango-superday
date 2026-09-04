@@ -1,6 +1,8 @@
 import type { EventName } from '../models/event-name';
 import * as events from '../models/event.model';
 import type { EventRecord, EventWhere, WindowBucket } from '../models/event.model';
+import type { EventMessage } from '../queue/message';
+import { publishEvent } from '../queue/publisher';
 
 /**
  * Business logic for events. Input has already been validated by the
@@ -15,12 +17,15 @@ import type { EventRecord, EventWhere, WindowBucket } from '../models/event.mode
 export interface IngestInput {
   accountId: string;
   eventName: EventName;
-  /** Omitted → the database stamps `now()`. */
+  /** Omitted → the time the API received the event. */
   timestamp?: Date;
 }
 
-export async function ingestEvent(input: IngestInput): Promise<EventRecord> {
-  return events.createEvent(input.accountId, input.eventName, input.timestamp);
+/** Publishes the event to the queue; src/consumer.ts inserts it into Postgres. Returns what was queued. */
+export async function ingestEvent(input: IngestInput): Promise<EventMessage> {
+  const message: EventMessage = { accountId: input.accountId, eventName: input.eventName, timestamp: input.timestamp ?? new Date() };
+  await publishEvent(message);
+  return message;
 }
 
 // ---------------------------------------------------------------------------
