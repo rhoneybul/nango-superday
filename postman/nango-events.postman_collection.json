@@ -12,6 +12,10 @@
     {
       "key": "accountId",
       "value": "acc_acme"
+    },
+    {
+      "key": "nextCursor",
+      "value": ""
     }
   ],
   "item": [
@@ -793,7 +797,7 @@
                 "type": "text/javascript",
                 "exec": [
                   "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
-                  "pm.test(\"windowed shape\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.buckets).to.be.an(\"array\"); });"
+                  "pm.test(\"windowed shape\", () => { const b = pm.response.json(); pm.expect(b.windowSeconds).to.eql(3600); pm.expect(b.buckets).to.be.an(\"array\"); pm.expect(b.meta).to.have.keys(\"total\", \"limit\", \"offset\"); });"
                 ]
               }
             }
@@ -817,6 +821,104 @@
                 {
                   "key": "window",
                   "value": "1h"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Counts per hour over one day (24 buckets, zeros filled)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"24h at window=1h is 24 values\", () => { const b = pm.response.json(); pm.expect(b.meta.total).to.eql(24); pm.expect(b.buckets).to.have.lengthOf(24); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account={{accountId}}&window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "{{accountId}}"
+                },
+                {
+                  "key": "window",
+                  "value": "1h"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-09-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-02T00:00:00Z"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Counts per hour, second page of buckets (limit=10, offset=20)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"last 4 of 24 buckets\", () => { const b = pm.response.json(); pm.expect(b.meta).to.include({ total: 24, limit: 10, offset: 20 }); pm.expect(b.buckets).to.have.lengthOf(4); });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z&limit=10&offset=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "window",
+                  "value": "1h"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-09-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-02T00:00:00Z"
+                },
+                {
+                  "key": "limit",
+                  "value": "10"
+                },
+                {
+                  "key": "offset",
+                  "value": "20"
                 }
               ]
             },
@@ -1036,6 +1138,169 @@
               ]
             },
             "description": "The account filter must name a seeded account."
+          }
+        },
+        {
+          "name": "Page 1 (limit=2, stores nextCursor)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200\", () => pm.response.to.have.status(200));",
+                  "const meta = pm.response.json().meta; pm.collectionVariables.set(\"nextCursor\", meta.nextCursor || \"\");",
+                  "pm.test(\"meta has nextCursor (null only when the account has 2 or fewer events)\", () => pm.expect(meta).to.have.property(\"nextCursor\"));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account={{accountId}}&limit=2",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "{{accountId}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Page 2 (cursor from page 1)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 200 (400 if page 1 had no next page: send more events first)\", () => pm.response.to.have.status(200));",
+                  "pm.test(\"rows continue past page 1\", () => pm.expect(pm.response.json().data.length).to.be.at.most(2));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?account={{accountId}}&limit=2&cursor={{nextCursor}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "account",
+                  "value": "{{accountId}}"
+                },
+                {
+                  "key": "limit",
+                  "value": "2"
+                },
+                {
+                  "key": "cursor",
+                  "value": "{{nextCursor}}"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Invalid: cursor with offset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?cursor=abc&offset=5",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "cursor",
+                  "value": "abc"
+                },
+                {
+                  "key": "offset",
+                  "value": "5"
+                }
+              ]
+            },
+            "description": ""
+          }
+        },
+        {
+          "name": "Invalid: too many buckets (window=1s over a day)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status 400\", () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/events?window=1s&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "events"
+              ],
+              "query": [
+                {
+                  "key": "window",
+                  "value": "1s"
+                },
+                {
+                  "key": "from",
+                  "value": "2026-09-01T00:00:00Z"
+                },
+                {
+                  "key": "to",
+                  "value": "2026-09-02T00:00:00Z"
+                }
+              ]
+            },
+            "description": ""
           }
         }
       ]

@@ -1,5 +1,5 @@
 import { requireAccount } from '../services/account.service';
-import type { IngestInput, ListEventsInput } from '../services/event.service';
+import type { IngestInput } from '../services/event.service';
 import type { Validated } from './validation';
 
 /**
@@ -13,9 +13,11 @@ export const requireIngestAccount: Validated<{ ingest: IngestInput }> = async (_
   next();
 };
 
-/** GET /events: only when the `account` filter is present. */
-export const requireEventsAccount: Validated<{ listEvents: ListEventsInput }> = async (_req, res, next) => {
-  const id = res.locals.listEvents.account;
-  if (id !== undefined) await requireAccount(id);
-  next();
-};
+/** Query endpoints: only when the `account` filter is present. `key` is where the validator stored the input. */
+export function requireAccountIn<K extends string>(key: K): Validated<Record<K, { account?: string }>> {
+  return async (_req, res, next) => {
+    const id = res.locals[key].account;
+    if (id !== undefined) await requireAccount(id);
+    next();
+  };
+}

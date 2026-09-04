@@ -95,6 +95,9 @@ function parseConfig(raw) {
         if (t.maxErrorRate !== undefined && !(typeof t.maxErrorRate === 'number' && t.maxErrorRate >= 0 && t.maxErrorRate <= 1)) {
           problems.push('thresholds.maxErrorRate: must be a fraction between 0 and 1');
         }
+        if (t.minSuccessfulRps !== undefined && !(typeof t.minSuccessfulRps === 'number' && t.minSuccessfulRps > 0)) {
+          problems.push('thresholds.minSuccessfulRps: must be a number of 201 responses per second greater than 0');
+        }
       }
     }
   }
@@ -140,6 +143,8 @@ config.events.forEach((entry, i) => {
 const thresholds = {};
 if (config.thresholds.p95Ms !== undefined) thresholds.http_req_duration = [`p(95)<${config.thresholds.p95Ms}`];
 if (config.thresholds.maxErrorRate !== undefined) thresholds.http_req_failed = [`rate<=${config.thresholds.maxErrorRate}`];
+// Achieved throughput: 201 responses per second over the whole run, i.e. events actually stored.
+if (config.thresholds.minSuccessfulRps !== undefined) thresholds.successful = [`rate>=${config.thresholds.minSuccessfulRps}`];
 
 // Which statuses count as success for http_req_failed / the maxErrorRate threshold.
 http.setResponseCallback(http.expectedStatuses(...config.expectedStatuses));

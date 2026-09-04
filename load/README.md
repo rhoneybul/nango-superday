@@ -56,6 +56,7 @@ npm run load:local
 | `expectedStatuses`         | no       | Statuses that count as success for the error rate (default `[202]`). Add `429` when limiting is expected, `404` when a stream uses an unknown account on purpose. |
 | `thresholds.p95Ms`         | no       | Fail the run (non-zero exit) if p95 latency across all requests is at or above this many ms.              |
 | `thresholds.maxErrorRate`  | no       | Fail the run if the fraction of unexpected statuses/network errors exceeds this (`0.01` = 1%).            |
+| `thresholds.minSuccessfulRps` | no    | Fail the run if fewer than this many `201` responses per second were achieved over the whole run.         |
 
 Bad configs fail fast with a list of problems before any request is sent.
 

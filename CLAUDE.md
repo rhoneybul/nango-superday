@@ -22,6 +22,8 @@ Event ingestion API. Express 5 + TypeScript + RabbitMQ 4 (amqplib) + Prisma 7 (e
 - `npx prisma migrate dev --name <name>` — new migration; `npx prisma migrate deploy` — apply
 - `npm run seed` — upsert `SEEDED_ACCOUNTS` (`src/models/seeded-accounts.ts`) into `accounts` (also `npx prisma db seed`; idempotent). Compose runs `node dist/seed.js` after migrations on every start
 - `docker compose up --build` — Postgres :5432, RabbitMQ :5672 (mgmt UI :15672, nango/nango), API :3000, consumer; migrations applied on start
+- `npm run load` / `npm run load:throughput` — k6 via compose: `load/example.json` (rate-limit behaviour) / `load/throughput.json` (100 events/s stored for 60s; lift the limiter first with `INGEST_RATE_LIMIT_PER_MINUTE=100000 docker compose up -d api`)
+- `docker compose up --build` — Postgres on :5432 + API on :3000, migrations applied on start
 
 `npm install` runs `prisma generate` (postinstall). Generated client lives in `src/generated/prisma` (gitignored) — never edit it, never import from `@prisma/client` directly; import `../generated/prisma/client`.
 
@@ -35,7 +37,7 @@ src/services/    all input validation + business logic. Throws ValidationError (
 src/queue/       topology.ts (exchange `events` → quorum queue `events` with x-dead-letter-exchange `events.dlx` + x-delivery-limit 5 → `events.dlq`; `assertTopology`), message.ts (EventMessage zod codec), publisher.ts (`startPublisher` with amqplib recovery, `publishEvent` on a confirm channel; rejects while disconnected → 500).
 src/consumer.ts  `handleMessage`: decode fail → nack requeue=false (DLQ now); insert fail → nack requeue=true (broker dead-letters after the delivery limit); else ack. `main()` connects (recovery), prefetch 50, consumes.
 src/models/      Prisma data access for `events`. Receives already-validated input. Raw SQL only for `countByWindow`. `account.model.ts` (`findAccount`, `upsertAccount`); `seeded-accounts.ts` (`SEEDED_ACCOUNTS`: id, name, mainContact — the only place accounts are defined).
-src/middleware/require-account.ts  `requireIngestAccount` / `requireEventsAccount`: cached account lookup, NotFoundError → 404. Runs after validation and before the rate limiter.
+src/middleware/require-account.ts  `requireIngestAccount` and `requireAccountIn('listEvents')`: cached account lookup, NotFoundError → 404. Runs after validation and before the rate limiter.
 src/services/account.service.ts    `getAccount` / `requireAccount` through the cache (key `account:<id>`; hit TTL `ACCOUNT_CACHE_TTL_SECONDS`, miss cached 30s as the string `missing`).
 src/lib/redis.ts, src/lib/cache.ts  the one shared Redis client (`undefined` without REDIS_URL) and the `Cache` interface over it (in-memory Map fallback; Redis errors → warn + miss).
 src/seed.ts      seed entry point (compiled to dist/seed.js for compose)
@@ -61,9 +63,8 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 - `POST /ingest` body `{ account_id, event_name, timestamp? }` → 202 `{ data: { accountId, eventName, timestamp } }` once the broker confirmed the publish (no DB id yet; the consumer inserts later). `account_id` must be a seeded account → otherwise `404 { error: "Account <id> not found" }` (checked after validation, before the rate limit, so unknown accounts consume no quota). Missing timestamp → the API's receive time. Broker down → 500.
 - `GET /events?account&event&from&to&window&limit&offset`
   - `from`/`to`: ISO-8601 or epoch ms, inclusive. `from > to` → 400.
-  - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`.
-  - With `window` (`<n><s|m|h|d|w>`, e.g. `15m`, `1h`, `1d`): aggregated mode, `{ window, windowSeconds, buckets: [{ windowStart, count }], filters }`. Buckets are epoch-aligned via Postgres `date_bin`; empty buckets omitted.
-  - `account` must be a seeded account → otherwise 404 (same check and cache as ingest). No `account` → no lookup.
+  - No `window`: raw events newest-first, `{ data, meta: { total, limit, offset, nextCursor }, filters }`. `limit` defaults to `EVENTS_DEFAULT_LIMIT`, capped at `EVENTS_MAX_LIMIT`. Page with `offset` or `cursor=<meta.nextCursor>` (keyset on `(timestamp, id)`, `src/lib/cursor.ts`; `nextCursor` null on the last page; `cursor` + non-zero `offset` → 400). The service fetches `limit + 1` rows to detect a next page.
+  - With `window` (**aggregation bucket size**: `minute|hour|day` or `<n><s|m|h|d|w>`, max `366d`): `{ window, windowSeconds, buckets: [{ windowStart, count }], meta: { total, limit, offset }, filters }`. Buckets come from Postgres `date_bin` aligned to `BUCKET_ORIGIN_MS` (1970-01-05, a Monday → hours/days/weeks start on the hour/00:00 UTC/Monday). With both `from` and `to`, `fillEmptyBuckets` in the service adds the missing buckets as 0 so a 24h range at `1h` is exactly 24 values; without them only non-empty buckets are returned. Buckets are paged with `limit`/`offset` (`meta.total` = bucket count); `cursor` is not allowed. More than `EVENTS_MAX_BUCKETS` (10000) buckets → 400, checked up front from `from`/`to` and via a `LIMIT` guard otherwise.
   - Repeated query params (`?account=a&account=b`) → 400. Empty string params are treated as absent.
 - Errors: `400 { error, details? }` for validation, `404 { error: "Account <id> not found" }` (NotFoundError), `500 { error: "Internal server error" }` otherwise (no leak).
 - `GET /health` → `{ status: "ok" }`.
@@ -78,3 +79,5 @@ BigInt ids are serialised to strings in API responses (`toRecord` in the model).
 - Config is frozen; add new settings to the Zod schema + `Config` type in `src/config/index.ts`, and to `.env.example` and `docker-compose.yml`.
 - Prisma engines can't be downloaded in some sandboxes; `PRISMA_SCHEMA_ENGINE_BINARY=/usr/bin/true npx prisma generate` still works for `generate` (WASM-based). `migrate` does need the real engine.
 
+
+Pagination rule: every list-shaped fetch is bounded and paged. `findEvents`: `limit` (≤ `EVENTS_MAX_LIMIT`) plus offset or keyset cursor. Windowed buckets: capped by `EVENTS_MAX_BUCKETS` and paged with `limit`/`offset` in the service. Account reads are by primary key only; Grafana panel SQL carries its own `LIMIT`. A new list endpoint must follow the same shape (`limit`, `offset`, and `nextCursor` where the set is unbounded).

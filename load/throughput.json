@@ -1,0 +1,114 @@
+{
+  "target": "http://localhost:3000",
+  "duration": "60s",
+  "events": [
+    {
+      "account_id": "acc_acme",
+      "event_name": "signup",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_acme",
+      "event_name": "login",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_acme",
+      "event_name": "logout",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_acme",
+      "event_name": "purchase",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_globex",
+      "event_name": "signup",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_globex",
+      "event_name": "login",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_globex",
+      "event_name": "logout",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_globex",
+      "event_name": "purchase",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_initech",
+      "event_name": "signup",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_initech",
+      "event_name": "login",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_initech",
+      "event_name": "logout",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_initech",
+      "event_name": "purchase",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_umbrella",
+      "event_name": "signup",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_umbrella",
+      "event_name": "login",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_umbrella",
+      "event_name": "logout",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_umbrella",
+      "event_name": "purchase",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_hooli",
+      "event_name": "signup",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_hooli",
+      "event_name": "login",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_hooli",
+      "event_name": "logout",
+      "rps": 5
+    },
+    {
+      "account_id": "acc_hooli",
+      "event_name": "purchase",
+      "rps": 5
+    }
+  ],
+  "expectedStatuses": [
+    201
+  ],
+  "thresholds": {
+    "p95Ms": 250,
+    "maxErrorRate": 0,
+    "minSuccessfulRps": 95
+  }
+}

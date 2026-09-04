@@ -1,6 +1,7 @@
 import type { RequestHandler } from 'express';
 import { z } from 'zod';
 import { config } from '../config';
+import { decodeCursor } from '../lib/cursor';
 import { ValidationError } from '../lib/errors';
 import { EventName } from '../models/event-name';
 import type { IngestInput, ListEventsInput } from '../services/event.service';
@@ -33,14 +34,18 @@ const date = z.preprocess(
 );
 
 const SECONDS_PER_UNIT: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, w: 604800 };
+const WORD_WINDOWS: Record<string, string> = { minute: '1m', hour: '1h', day: '1d', week: '1w' };
+const MAX_WINDOW_SECONDS = 366 * 86400;
 
-/** `15m`, `1h`, `7d` … → `{ label, seconds }`. */
+/** Aggregation bucket size: `minute`, `hour`, `day`, or `<n><s|m|h|d|w>` such as `15m`, `6h`, `7d` → `{ label, seconds }`. */
 const window = z
   .string()
   .trim()
-  .regex(/^\d+[smhdw]$/, 'expected <number><s|m|h|d|w>, e.g. 15m, 1h, 1d')
+  .transform((raw) => WORD_WINDOWS[raw] ?? raw)
+  .pipe(z.string().regex(/^\d+[smhdw]$/, 'expected minute|hour|day or <number><s|m|h|d|w>, e.g. 15m, 1h, 1d'))
   .transform((label) => ({ label, seconds: Number(label.slice(0, -1)) * SECONDS_PER_UNIT[label.slice(-1)] }))
-  .refine((w) => w.seconds > 0, 'must be greater than zero');
+  .refine((w) => w.seconds > 0, 'must be greater than zero')
+  .refine((w) => w.seconds <= MAX_WINDOW_SECONDS, 'must be at most 366d');
 
 // ---------------------------------------------------------------------------
 // POST /ingest
@@ -70,6 +75,13 @@ function dropEmptyParams(query: unknown): unknown {
 }
 
 const limitMessage = `must be between 1 and ${config.eventsMaxLimit}`;
+const limit = z.coerce.number().int().min(1, limitMessage).max(config.eventsMaxLimit, limitMessage).default(config.eventsDefaultLimit);
+const offset = z.coerce.number().int().min(0, 'must be >= 0').default(0);
+
+/** How many buckets a windowed query over [from, to] would produce. */
+function bucketCount(from: Date, to: Date, windowSeconds: number): number {
+  return Math.ceil((to.getTime() - from.getTime()) / 1000 / windowSeconds) + 1;
+}
 
 const listEventsSchema: z.ZodType<ListEventsInput> = z
   .preprocess(
@@ -80,11 +92,25 @@ const listEventsSchema: z.ZodType<ListEventsInput> = z
       from: date.optional(),
       to: date.optional(),
       window: window.optional(),
-      limit: z.coerce.number().int().min(1, limitMessage).max(config.eventsMaxLimit, limitMessage).default(config.eventsDefaultLimit),
-      offset: z.coerce.number().int().min(0, 'must be >= 0').default(0),
+      limit,
+      offset,
+      cursor: z
+        .string()
+        .transform((raw, ctx) => {
+          const cursor = decodeCursor(raw);
+          if (!cursor) ctx.addIssue({ code: 'custom', message: 'must be a nextCursor value from a previous response' });
+          return cursor ?? undefined;
+        })
+        .optional(),
     }),
   )
-  .refine((q) => !q.from || !q.to || q.from <= q.to, { path: ['from'], message: 'must be before or equal to to' });
+  .refine((q) => !(q.cursor && q.offset), { path: ['offset'], message: 'cannot be combined with cursor' })
+  .refine((q) => !(q.cursor && q.window), { path: ['cursor'], message: 'cannot be combined with window; page buckets with offset' })
+  .refine((q) => !q.from || !q.to || q.from <= q.to, { path: ['from'], message: 'must be before or equal to to' })
+  .refine((q) => !q.window || !q.from || !q.to || bucketCount(q.from, q.to, q.window.seconds) <= config.eventsMaxBuckets, {
+    path: ['window'],
+    message: `would produce more than ${config.eventsMaxBuckets} buckets; use a larger window or a narrower from/to`,
+  });
 
 export const validateListEvents: Validated<{ listEvents: ListEventsInput }> = (req, res, next) => {
   res.locals.listEvents = parse(listEventsSchema, req.query);

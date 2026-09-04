@@ -72,20 +72,32 @@ Ingest is rate limited to `INGEST_RATE_LIMIT_PER_MINUTE` (default 100) per `acco
 | `event`   | Filter by event name (must be a known `EventName`)                          |
 | `from`    | Inclusive lower bound on `timestamp` (ISO-8601 or epoch ms)                 |
 | `to`      | Inclusive upper bound on `timestamp` (ISO-8601 or epoch ms)                 |
-| `window`  | Bucket size, e.g. `30s`, `15m`, `1h`, `1d`, `1w`. Switches to aggregated mode |
+| `window`  | Aggregation bucket size: `minute`, `hour`, `day`, or `30s`, `15m`, `1h`, `1d`, `1w` (max `366d`). Switches to aggregated mode |
 | `limit`   | Page size (default `EVENTS_DEFAULT_LIMIT`, max `EVENTS_MAX_LIMIT`)          |
-| `offset`  | Page offset                                                                 |
+| `offset`  | Page offset (simple paging; cost grows with depth)                          |
+| `cursor`  | Raw listing only: `meta.nextCursor` from the previous page (keyset paging; constant cost). Not with `offset` |
 
 Without `window` the response is the raw events, newest first:
 
 ```json
-{ "data": [...], "meta": { "total": 2, "limit": 100, "offset": 0 }, "filters": { "account": "acc_1" } }
+{ "data": [...], "meta": { "total": 2, "limit": 100, "offset": 0, "nextCursor": null }, "filters": { "account": "acc_1" } }
 ```
 
-With `window` the response is a count per time bucket (epoch-aligned via Postgres `date_bin`; empty buckets omitted):
+With `window` the response is a count per bucket, oldest first. Buckets are aligned to the clock (a `1h`
+bucket starts on the hour, `1d` at 00:00 UTC, `1w` on a Monday), and when `from` and `to` are given every
+bucket in the range is present, so a 24h range at `window=1h` is exactly 24 values, empty ones as `0`.
+Buckets are paged with `limit`/`offset`; `meta.total` is the number of buckets in the range. A query that
+would produce more than `EVENTS_MAX_BUCKETS` (10000) buckets is a `400`.
+
+```bash
+curl 'localhost:3000/events?account=acc_acme&window=1h&from=2026-09-01T00:00:00Z&to=2026-09-02T00:00:00Z'
+```
 
 ```json
-{ "window": "1h", "windowSeconds": 3600, "buckets": [{ "windowStart": "2026-09-01T10:00:00.000Z", "count": 2 }], "filters": {} }
+{ "window": "1h", "windowSeconds": 3600,
+  "buckets": [{ "windowStart": "2026-09-01T00:00:00.000Z", "count": 0 }, { "windowStart": "2026-09-01T01:00:00.000Z", "count": 2 }, "…22 more"],
+  "meta": { "total": 24, "limit": 100, "offset": 0 },
+  "filters": { "account": "acc_acme", "from": "2026-09-01T00:00:00.000Z", "to": "2026-09-02T00:00:00.000Z" } }
 ```
 
 ### `GET /metrics`

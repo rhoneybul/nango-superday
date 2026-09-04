@@ -40,6 +40,8 @@ export const config = {
   eventsDefaultLimit: integer('EVENTS_DEFAULT_LIMIT', 100),
   /** Largest `limit` a caller may ask for on GET /events. */
   eventsMaxLimit: integer('EVENTS_MAX_LIMIT', 1000),
+  /** Most buckets a windowed GET /events may return; narrower ranges or wider windows are required beyond it. */
+  eventsMaxBuckets: integer('EVENTS_MAX_BUCKETS', 10000),
   /** POST /ingest requests allowed per minute for each `account_id:event_name`. */
   ingestRateLimitPerMinute: integer('INGEST_RATE_LIMIT_PER_MINUTE', 100),
   /** How long a successful account lookup stays cached (Redis, or memory without REDIS_URL). */

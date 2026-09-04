@@ -89,7 +89,8 @@ services:
       RABBITMQ_URL: amqp://nango:nango@rabbitmq:5672
       EVENTS_DEFAULT_LIMIT: 100
       EVENTS_MAX_LIMIT: 1000
-      INGEST_RATE_LIMIT_PER_MINUTE: 100
+      EVENTS_MAX_BUCKETS: 10000
+      INGEST_RATE_LIMIT_PER_MINUTE: ${INGEST_RATE_LIMIT_PER_MINUTE:-100}   # raise for load/throughput.json
       ACCOUNT_CACHE_TTL_SECONDS: 300
       REDIS_URL: redis://redis:6379
       LOG_LEVEL: info

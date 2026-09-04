@@ -1,3 +1,4 @@
+import type { EventCursor } from '../lib/cursor';
 import { Prisma } from '../generated/prisma/client';
 import { prisma } from '../lib/prisma';
 import type { EventName } from './event-name';
@@ -22,11 +23,6 @@ export interface EventWhere {
   timestamp?: { gte?: Date; lte?: Date };
 }
 
-export interface WindowBucket {
-  windowStart: Date;
-  count: number;
-}
-
 /** BigInt ids are not JSON-serialisable, so they go out as strings. */
 function toRecord(row: { id: bigint; accountId: string; eventName: string; timestamp: Date; createdAt: Date }): EventRecord {
   return { ...row, id: row.id.toString() };
@@ -39,12 +35,22 @@ export async function createEvent(accountId: string, eventName: EventName, times
   return toRecord(row);
 }
 
-export async function findEvents(where: EventWhere, limit: number, offset: number): Promise<EventRecord[]> {
+export interface Page {
+  offset: number;
+  /** Keyset: only rows strictly after this (timestamp, id) in listing order. */
+  after?: EventCursor;
+}
+
+/** Newest first. `after` uses the (…, timestamp) indexes directly, so deep pages cost the same as the first. */
+export async function findEvents(where: EventWhere, limit: number, page: Page): Promise<EventRecord[]> {
+  const keyset: Prisma.EventWhereInput = page.after
+    ? { OR: [{ timestamp: { lt: page.after.timestamp } }, { timestamp: page.after.timestamp, id: { lt: page.after.id } }] }
+    : {};
   const rows = await prisma.event.findMany({
-    where,
+    where: { ...where, ...keyset },
     orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
     take: limit,
-    skip: offset,
+    skip: page.offset,
   });
   return rows.map(toRecord);
 }
@@ -53,13 +59,21 @@ export async function countEvents(where: EventWhere): Promise<number> {
   return prisma.event.count({ where });
 }
 
+export interface WindowBucket {
+  windowStart: Date;
+  count: number;
+}
+
+/** Bucket alignment origin: 1970-01-05 00:00 UTC, a Monday, so 1w buckets start on Mondays and 1h/1d stay on the hour/midnight UTC. */
+export const BUCKET_ORIGIN_MS = Date.UTC(1970, 0, 5);
+
 /**
- * Counts events grouped into fixed-size time buckets of `windowSeconds`.
- * Buckets are aligned to the Unix epoch via Postgres `date_bin`, so a 1h
- * window always starts on the hour, a 1d window at 00:00 UTC, etc.
- * Empty buckets are not returned.
+ * Counts events grouped into fixed-size time buckets of `windowSeconds`,
+ * aligned to BUCKET_ORIGIN_MS via Postgres `date_bin`. Only buckets with
+ * events come back (the service fills the gaps); at most `maxBuckets` rows,
+ * which the service treats as "range too wide" when hit.
  */
-export async function countEventsByWindow(where: EventWhere, windowSeconds: number): Promise<WindowBucket[]> {
+export async function countEventsByWindow(where: EventWhere, windowSeconds: number, maxBuckets: number): Promise<WindowBucket[]> {
   const conditions: Prisma.Sql[] = [];
   if (where.accountId) conditions.push(Prisma.sql`account_id = ${where.accountId}`);
   if (where.eventName) conditions.push(Prisma.sql`event_name = ${where.eventName}`);
@@ -69,12 +83,13 @@ export async function countEventsByWindow(where: EventWhere, windowSeconds: numb
 
   const interval = `${windowSeconds} seconds`;
   const rows = await prisma.$queryRaw<{ window_start: Date; count: bigint }[]>`
-    SELECT date_bin(${interval}::interval, "timestamp", TIMESTAMPTZ 'epoch') AS window_start,
+    SELECT date_bin(${interval}::interval, "timestamp", TIMESTAMPTZ '1970-01-05 00:00:00+00') AS window_start,
            COUNT(*)::bigint AS count
     FROM events
     ${whereSql}
     GROUP BY window_start
     ORDER BY window_start ASC
+    LIMIT ${maxBuckets}
   `;
   return rows.map((r) => ({ windowStart: r.window_start, count: Number(r.count) }));
 }

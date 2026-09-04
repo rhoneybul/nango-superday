@@ -10,6 +10,7 @@ export default defineConfig({
       RABBITMQ_URL: 'amqp://test:test@localhost:5672',
       EVENTS_DEFAULT_LIMIT: '50',
       EVENTS_MAX_LIMIT: '500',
+      EVENTS_MAX_BUCKETS: '10000',
       LOG_LEVEL: 'silent',
     },
   },
